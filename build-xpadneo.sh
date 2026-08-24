@@ -65,17 +65,23 @@ log "Installing xpadneo for kernel $KVER"
 in_chroot "dkms install 'hid-xpadneo/$XPADNEO_VERSION' -k '$KVER' --force" \
   || die "xpadneo DKMS install failed for $KVER"
 
-# DKMS installs xpadneo under kernel/drivers/hid. The NVIDIA installer only
-# copies the updates tree into the final rootfs, so copy the compiled module
-# into that tree as well and let depmod rebuild the module index later.
-mkdir -p "$UPPER/usr/lib/modules/$KVER/updates/dkms"
-XPADNEO_MODULE="$(find "$MERGED/usr/lib/modules/$KVER" -type f \( -name 'hid-xpadneo.ko' -o -name 'hid-xpadneo.ko.zst' -o -name 'hid-xpadneo.ko.xz' -o -name 'hid-xpadneo.ko.gz' \) -print -quit)"
-[[ -n "$XPADNEO_MODULE" ]] || die "xpadneo module was not found after DKMS install"
-cp -a "$XPADNEO_MODULE" "$UPPER/usr/lib/modules/$KVER/updates/dkms/"
+# DKMS installs the compiled module directly into the overlay-mounted
+# /usr/lib/modules tree. Do NOT copy it from MERGED back into UPPER: when
+# MERGED resolves that file from UPPER, cp would read and truncate the same
+# destination file, producing a zero-byte .ko.zst. Verify the actual module
+# in the overlay instead.
+XPADNEO_MODULE="$MERGED/usr/lib/modules/$KVER/updates/dkms/hid-xpadneo.ko.zst"
+if [[ ! -s "$XPADNEO_MODULE" ]]; then
+  XPADNEO_MODULE="$(find "$MERGED/usr/lib/modules/$KVER" -type f \( -name 'hid-xpadneo.ko' -o -name 'hid-xpadneo.ko.zst' -o -name 'hid-xpadneo.ko.xz' -o -name 'hid-xpadneo.ko.gz' \) -size +0c -print -quit)"
+fi
+[[ -n "$XPADNEO_MODULE" && -s "$XPADNEO_MODULE" ]] \
+  || die "xpadneo module is missing or zero bytes after DKMS install"
+log "xpadneo module: $XPADNEO_MODULE ($(stat -c %s "$XPADNEO_MODULE") bytes)"
 
 # xpadneo's own rules/config are needed in the final SteamOS rootfs.
 mkdir -p "$MNT/etc/modules-load.d" "$MNT/etc/modprobe.d"
 cat > "$MNT/etc/modules-load.d/xpadneo.conf" <<'XPADNEO_MODULES'
+uhid
 hid_xpadneo
 XPADNEO_MODULES
 
@@ -97,8 +103,6 @@ for f in 60-xpadneo.rules 70-xpadneo-disable-hidraw.rules; do
 done
 
 # Xbox Series X|S BLE workaround recommended by xpadneo documentation.
-# It prevents the exact "connected/rumble works but no input" class of
-# problems seen with modern Xbox BLE controllers on BlueZ.
 if [[ -f "$MNT/etc/bluetooth/main.conf" ]]; then
   if ! grep -q '^\[LE\]' "$MNT/etc/bluetooth/main.conf"; then
     cat >> "$MNT/etc/bluetooth/main.conf" <<'XPADNEO_BT'
@@ -142,7 +146,8 @@ LEAutoSecurity=false
 XPADNEO_INPUT
 fi
 
-in_chroot "depmod -a '$KVER'"
+# Do not run depmod here: the upstream NVIDIA installer runs depmod after
+# the complete driver/module payload has been copied into the image.
 log "xpadneo $XPADNEO_VERSION built successfully for $KVER"
 
 '''
@@ -153,7 +158,6 @@ bash -n "$PATCHED"
 
 # xpadneo needs git in the build chroot. The upstream NVIDIA script already
 # has the host-side git requirement, but its chroot package list does not.
-# Add git to the temporary script's build-only package installation.
 python3 - "$PATCHED" <<'PY'
 from pathlib import Path
 import sys
