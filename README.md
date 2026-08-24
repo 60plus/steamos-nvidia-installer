@@ -83,6 +83,47 @@ Takes roughly 10–20 minutes. The result is:
 steamdeck-<version>-nvidia-usbinstall.img
 ```
 
+### Optional: Xbox Series Bluetooth controller support (xpadneo)
+
+If an Xbox One S / Xbox Series controller pairs over Bluetooth but the
+sticks and buttons are not detected correctly, you can use the included
+`build-xpadneo.sh` wrapper. It adds **xpadneo v0.10.4**, a Linux kernel
+driver for Xbox controllers over Bluetooth, and builds it against the exact
+SteamOS kernel contained in the recovery image.
+
+The wrapper is an optional build path and **does not modify the upstream
+`steamos-nvidia-installer.sh`**. It creates a temporary patched copy during
+the build and then runs the normal NVIDIA installer.
+
+First make sure these three files are in the same directory:
+
+```
+steamos-nvidia-installer.sh
+build-xpadneo.sh
+steamdeck-<version>.img
+```
+
+Then use the wrapper instead of the command above:
+
+```bash
+sudo ./build-xpadneo.sh steamdeck-<version>.img
+```
+
+The wrapper automatically:
+
+- adds xpadneo v0.10.4
+- builds xpadneo against the exact SteamOS kernel from the recovery image
+- installs the xpadneo kernel module
+- installs the required udev rules
+- adds the Xbox Series Bluetooth LE configuration
+- builds the NVIDIA driver as usual
+- produces the same `steamdeck-<version>-nvidia-usbinstall.img` output
+
+**Important:** if the controller connects but inputs are missing, also connect
+the controller to Windows and check for a firmware update in the **Xbox
+Accessories** app. In testing, updating the Xbox Series controller firmware
+was required before the controller worked correctly in SteamOS.
+
 ### Picking a driver branch
 
 By default you get whatever `nvidia-open` current Arch ships. To pin a
