@@ -43,7 +43,8 @@
 #   4. Adds the one-click installer: Valve's own repair_device.sh (which
 #      installs by CLONING the running system, so the driver propagates)
 #      patched for generic hardware — target-disk override, /dev/sdX
-#      partition-suffix autodetect, NVMe-sanitize skipped on non-NVMe —
+#      partition-suffix autodetect, NVMe-sanitize skipped on non-NVMe and
+#      tolerated when a drive doesn't implement it —
 #      plus a zenity disk-picker wrapper, a desktop icon, and NOPASSWD sudo
 #      for deck (remove /etc/sudoers.d/zz-deck-nopasswd on the installed
 #      system once you set a password).
@@ -452,6 +453,21 @@ NVIDIA_VER="$(in_chroot "pacman -Q nvidia-utils" | awk '{print $2}')"
   || die "Chroot has nvidia-utils $NVIDIA_VER but $DRIVER_VERSION was pinned — stale overlay? Delete $WORKDIR and rerun."
 log "Built nvidia-open $NVIDIA_VER for $KVER"
 
+# SteamOS's lib32-mangohud is missing a dependency: /usr/lib32/libMangoHud.so
+# (and libMangoHud_opengl.so) carry a hard DT_NEEDED on libxkbcommon.so.0, but
+# the image ships only the 64-bit libxkbcommon. The gamescope session preloads
+# the overlay system-wide, so any game with a 32-bit component or anti-cheat
+# helper fails the preload — seen as a SIGSEGV a minute or two after launch.
+# Taken from the image's OWN frozen mirror (multilib-3.8.1x carries 1.10.0-1,
+# matching the 64-bit libxkbcommon already installed), so no current-Arch
+# library enters the image. Sits outside the resume branch above so a warm
+# --workdir predating this still picks it up; --needed makes it a no-op after
+# that. Joins the payload automatically via the pacman -Qq diff below.
+log "Installing lib32-libxkbcommon (missing dep of SteamOS's lib32-mangohud)"
+in_chroot "pacman --config $PACCONF -Sy" || warn "pacman -Sy failed — trying the cached db"
+in_chroot "pacman --config $PACCONF -S $PACOPTS lib32-libxkbcommon" \
+  || die "could not install lib32-libxkbcommon from the image's frozen mirror"
+
 # "Before" = the pristine image's own pacman db (read directly, host-side) —
 # NOT the chroot's, whose db carries installs cached in the overlay upper
 # layer from previous runs and would make the diff come out empty.
@@ -521,6 +537,26 @@ EOF
 log "Enabling nvidia suspend/resume services"
 chroot "$MNT" systemctl enable nvidia-suspend nvidia-resume nvidia-hibernate 2>/dev/null \
   || warn "Could not enable nvidia power services (non-fatal)"
+
+# ------------------------------------------------- OOBE steam-reset fix
+# The recovery image ships an OOBE build of steam-jupiter whose
+# /usr/bin/steam wrapper deletes ~/.steam and ~/.local/share/Steam on every
+# launch ("always start with a fresh steam per boot"). Installed systems
+# are a clone of the running USB, so every boot wiped the user's Steam
+# login, settings and installed games until the first OS update swapped in
+# the normal wrapper — and any later reflash brought the wipe back
+# (issue #6). Neutralise just the delete; the wrapper's bootstrap handling
+# is left alone.
+if [[ -f "$MNT/usr/bin/steam" ]] \
+   && grep -q 'rm -rf --one-file-system.*STEAM_LINKS' "$MNT/usr/bin/steam"; then
+  log "Disabling the OOBE steam wrapper's per-boot Steam data wipe"
+  sed -i '/rm -rf --one-file-system.*STEAM_LINKS/ s|.*|  : # per-boot Steam data wipe disabled by steamos-nvidia-installer|' \
+    "$MNT/usr/bin/steam"
+  grep -q 'wipe disabled by steamos-nvidia-installer' "$MNT/usr/bin/steam" \
+    || die "steam wrapper patch failed"
+else
+  warn "OOBE steam wrapper wipe not found — skipping (upstream wrapper may have changed)"
+fi
 
 # --------------------------------------------------------- update strategy
 # OOBE day-1 auto-migration stays masked in all modes except stock — a
@@ -662,6 +698,13 @@ in_chroot "pacman -Sy"
 in_chroot "pacman -Qq" | LC_ALL=C sort > "$WORK/before.txt"
 in_chroot "pacman -U --noconfirm --needed /tmp/headers.pkg.tar.zst"
 in_chroot "pacman -S --noconfirm --needed dkms"
+
+# Same missing dependency the build side installs: without lib32-libxkbcommon
+# the gamescope session's 32-bit MangoHud preload fails in every game with a
+# 32-bit component. Non-fatal here — an overlay dependency must never brick an
+# OS update. Lands in the payload via the before/after diff below.
+in_chroot "pacman -S --noconfirm --needed lib32-libxkbcommon" \
+  || log "WARNING: lib32-libxkbcommon install failed — 32-bit MangoHud overlay will not load"
 
 # Driver = the exact pinned Arch packages this image was built with (NOT the
 # slot's frozen repo — that only has Valve's older driver).
@@ -844,11 +887,16 @@ if [[ $ADD_INSTALLER -eq 1 ]]; then
     -e 's|^DISK_SUFFIX=p$|DISK_SUFFIX=""; [[ "$DISK" =~ [0-9]$ ]] \&\& DISK_SUFFIX="p"|' \
     "$TOOLS/repair_device.sh"
   grep -q 'STEAMOS_TARGET_DISK' "$TOOLS/repair_device.sh" || die "DISK patch failed"
-  # skip NVMe sanitize for non-NVMe targets (it error-traps on SATA/virtio)
+  # skip NVMe sanitize for non-NVMe targets (it error-traps on SATA/virtio),
+  # and tolerate NVMe drives that don't implement sanitize — some (e.g. WD
+  # Gen3) return "Access Denied ... (0x4286)" and would abort the whole
+  # install (issue #8). A failed sanitize just means the old data isn't
+  # pre-erased; the install proceeds fine without it.
   # shellcheck disable=SC2016
-  sed -i '/^all)$/,/^  ;;$/ s|^  sanitize_all$|  if [[ "$DISK" == /dev/nvme* ]]; then sanitize_all; else ewarn "Non-NVMe target: skipping NVMe sanitize"; fi|' \
+  sed -i '/^all)$/,/^  ;;$/ s|^  sanitize_all$|  if [[ "$DISK" == /dev/nvme* ]]; then sanitize_all \|\| ewarn "NVMe sanitize failed or unsupported - continuing without it"; else ewarn "Non-NVMe target: skipping NVMe sanitize"; fi|' \
     "$TOOLS/repair_device.sh"
   grep -q 'skipping NVMe sanitize' "$TOOLS/repair_device.sh" || die "sanitize patch failed"
+  grep -q 'sanitize failed or unsupported' "$TOOLS/repair_device.sh" || die "sanitize-tolerance patch failed"
 
   log "Installing disk-picker wrapper + desktop icons"
   cat > "$TOOLS/install_to_hd.sh" <<'WRAPPER'
