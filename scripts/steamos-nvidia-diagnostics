@@ -1,0 +1,66 @@
+#!/bin/bash
+# Read-only report. Optional tools may be absent on recovery images.
+set -u
+export LC_ALL=C
+probe() {
+  printf '\n[%s]\n' "$1"
+  shift
+  if command -v "$1" >/dev/null 2>&1; then
+    timeout 15 "$@" 2>&1 || printf 'Unavailable or command failed (status %s).\n' "$?"
+  else
+    printf 'Not installed: %s\n' "$1"
+  fi
+}
+printf 'SteamOS NVIDIA diagnostics\n'
+printf 'Review the report before sharing. Hardware identifiers and log messages may be present.\n'
+probe 'Installed integration version' cat /usr/lib/steamos-nvidia/integration-version.json
+probe 'Original image build' cat /usr/lib/steamos-nvidia/build-info.txt
+probe 'Last installed versions' cat /usr/lib/steamos-nvidia/runtime-info.txt
+probe 'Steam HDR preference' python3 /usr/lib/steamos-nvidia/hdr-defaults.py --status
+probe 'CPU' lscpu
+probe 'System' cat /etc/os-release
+probe 'Kernel' uname -r
+probe 'Graphics, network and audio devices' lspci -nnk
+probe 'Driver' nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+probe 'Loaded modules' lsmod
+probe 'Kernel command line' cat /proc/cmdline
+probe 'NVIDIA module parameters' cat /sys/module/nvidia_drm/parameters/modeset /sys/module/nvidia_drm/parameters/fbdev
+probe 'xpadneo' modinfo hid_xpadneo
+probe 'Display connectors' sh -c 'for f in /sys/class/drm/card*-*/status; do [ -f "$f" ] && printf "%s: %s\n" "$f" "$(cat "$f")"; done'
+probe 'Display modes' sh -c 'for f in /sys/class/drm/card*-*/modes; do [ -f "$f" ] && { printf "%s:\n" "$f"; cat "$f"; }; done'
+probe 'Desktop display configuration' kscreen-doctor -o
+probe 'Gamescope version' gamescope --version
+probe 'Session type' printenv XDG_SESSION_TYPE
+probe 'Audio devices' wpctl status
+probe 'Bluetooth controllers' bluetoothctl list
+probe 'USB devices and Bluetooth adapters' lsusb
+probe 'Radio blocks' rfkill list
+probe 'Bluetooth configuration' cat /etc/bluetooth/main.conf /etc/bluetooth/input.conf
+probe 'Bluetooth service' systemctl --no-pager status bluetooth.service
+probe 'Free space' df -h / /home /tmp
+probe 'Partition sizes' lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS
+probe 'System Btrfs allocation' btrfs filesystem usage /
+probe 'Booted slot' steamos-bootconf this-image
+probe 'Last completed patch' cat /usr/lib/steamos-nvidia/complete
+probe 'NVIDIA power services' systemctl is-enabled nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service
+probe 'Recent update log' tail -n 100 /var/log/steamos-nvidia-repatch.log
+probe 'Current boot errors' journalctl -b -p err --no-pager -n 100
+
+probe "Safe Graphics" steamos-nvidia-safe-graphics status
+
+probe 'Bluetooth audio resume' systemctl --user --no-pager status steamos-nvidia-bluetooth-resume.service
+probe 'Bluetooth audio resume log' journalctl --user -b -u steamos-nvidia-bluetooth-resume.service --no-pager -n 40
+
+probe 'Root filesystem and slot source' findmnt -no SOURCE,FSTYPE,OPTIONS /
+probe 'Installed NVIDIA package' pacman -Q nvidia-utils
+probe 'NVIDIA module on disk' modinfo -F version nvidia
+probe 'Loaded NVIDIA module' cat /sys/module/nvidia/version
+probe 'Installed addon files (does not test runtime behavior)' bash -c 'source /usr/lib/steamos-nvidia/pc-support.sh && pc_check_addons /'
+probe 'Effective HDR startup hook' systemctl --user cat steam-launcher.service
+probe 'Effective graphics session' systemctl --user cat gamescope-session.service
+probe 'Effective Bluetooth audio resume service' systemctl --user cat steamos-nvidia-bluetooth-resume.service
+
+probe 'Last NVIDIA userspace dependency check (recorded during build or repair)' cat /usr/lib/steamos-nvidia/userspace-check.txt
+
+probe 'Experimental Gamescope selection' cat /usr/lib/steamos-nvidia/gamescope/status.txt
+probe 'Game Mode executable search path' systemctl --user show gamescope-session.service -p Environment

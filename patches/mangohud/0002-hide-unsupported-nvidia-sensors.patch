@@ -1,0 +1,20 @@
+--- a/src/hud_elements.cpp
++++ b/src/hud_elements.cpp
+@@ -327,7 +327,7 @@
+                         HUDElements.TextColored(HUDElements.colors.text, "°C");
+             }
+ 
+-            if (gpu->metrics.junction_temp > -1 && HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_junction_temp]) {
++            if (gpu->vendor_id != 0x10de && gpu->metrics.junction_temp > -1 && HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_junction_temp]) {
+                 ImguiNextColumnOrNewRow();
+                 if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_temp_fahrenheit])
+                     right_aligned_text(text_color, HUDElements.ralign_width, "%i", HUDElements.convert_to_fahrenheit(gpu->metrics.junction_temp));
+@@ -404,7 +404,7 @@
+                 ImGui::PopFont();
+             }
+ 
+-            if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_voltage]) {
++            if (gpu->vendor_id != 0x10de && HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_voltage]) {
+                 ImguiNextColumnOrNewRow();
+                 right_aligned_text(text_color, HUDElements.ralign_width, "%i", gpu->metrics.voltage);
+                 ImGui::SameLine(0, 1.0f);

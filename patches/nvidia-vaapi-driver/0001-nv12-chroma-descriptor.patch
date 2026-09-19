@@ -1,0 +1,22 @@
+--- a/src/direct/direct-export-buf.c
++++ b/src/direct/direct-export-buf.c
+@@ -1000,7 +1000,8 @@
+         desc->objects[0].drm_format_modifier = img->mods[0];
+ 
+         for (uint32_t i = 0; i < fmtInfo->numPlanes; i++) {
+-            desc->layers[i].drm_format = fmtInfo->plane[i].fourcc;
++            desc->layers[i].drm_format = (img->format == NV_FORMAT_NV12 && i == 1)
++                ? DRM_FORMAT_GR88 : fmtInfo->plane[i].fourcc;
+             desc->layers[i].num_planes = 1;
+             desc->layers[i].object_index[0] = 0;
+             desc->layers[i].offset[0] = img->offsets[i];
+@@ -1015,7 +1016,8 @@
+             desc->objects[i].size = img->size[i];
+             desc->objects[i].drm_format_modifier = img->mods[i];
+ 
+-            desc->layers[i].drm_format = fmtInfo->plane[i].fourcc;
++            desc->layers[i].drm_format = (img->format == NV_FORMAT_NV12 && i == 1)
++                ? DRM_FORMAT_GR88 : fmtInfo->plane[i].fourcc;
+             desc->layers[i].num_planes = 1;
+             desc->layers[i].object_index[0] = i;
+             desc->layers[i].offset[0] = img->offsets[i];

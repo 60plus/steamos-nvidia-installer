@@ -1,16 +1,16 @@
 #!/bin/bash
 #
-# steamos-nvidia-installer.sh — turn a CLEAN SteamOS OOBE repair image into a
+# steamos-nvidia-installer.sh - turn a CLEAN SteamOS OOBE repair image into a
 # one-click USB installer with NVIDIA (RTX) driver support baked in.
 #
 # Installs the CURRENT Arch Linux nvidia-open driver by default (Valve's own
-# mirror only pins an older 575.x) — or any branch you name with --driver.
+# mirror only pins an older 575.x) - or any branch you name with --driver.
 # The version is resolved once at build time, pinned to
 # permanent archive.archlinux.org URLs, and the on-device self-heal repatch
 # reuses those exact packages, so the installed system stays on one known
 # driver even across OS updates. Safety: NVIDIA's userspace
 # blobs target ancient glibc, and the Arch-compiled helpers the newer
-# drivers need (egl-wayland2) are small — but the build still extracts every
+# drivers need (egl-wayland2) are small - but the build still extracts every
 # downloaded package and verifies no binary needs a newer glibc than the
 # image ships (frozen SteamOS 3.8 = glibc 2.41; current Arch = 2.43, so
 # blind installs of Arch-compiled libs are NOT safe in general).
@@ -24,16 +24,16 @@
 #
 # What it does, in one pass over one copy:
 #   1. Builds nvidia-open (DKMS) against the image's exact neptune kernel in
-#      a throwaway overlayfs chroot, using Valve's frozen Arch mirror — the
+#      a throwaway overlayfs chroot, using Valve's frozen Arch mirror - the
 #      toolchain/headers never enter the image. Copies only the driver
 #      payload (modules, nvidia-utils, lib32, egl-*, GSP firmware) into the
 #      rootfs and registers it in the pacman db.
 #   2. Blacklists nouveau + enables nvidia-drm KMS via modprobe.d AND the
-#      kernel cmdline (grub.cfg on the efi partition + /etc/default/grub —
+#      kernel cmdline (grub.cfg on the efi partition + /etc/default/grub -
 #      the latter is what the installed system's regenerated grub uses).
 #   3. Makes OS updates SELF-HEALING (default): updating from within Steam
-#      works — Valve's updater stages the new OS in the spare A/B slot as
-#      usual, then a wrapper around steamos-update rebuilds the NVIDIA
+#      works - Valve's updater stages the new OS in the spare A/B slot as
+#      usual, then a shared RAUC completion hook rebuilds the NVIDIA
 #      driver for the new OS (in a chroot on the new slot, from that
 #      version's own repo branch) before the reboot prompt appears. If the
 #      rebuild fails, the update is cancelled and the machine keeps booting
@@ -42,29 +42,29 @@
 #      stock update behaviour (an OS update then removes the driver!).
 #   4. Adds the one-click installer: Valve's own repair_device.sh (which
 #      installs by CLONING the running system, so the driver propagates)
-#      patched for generic hardware — target-disk override, /dev/sdX
+#      patched for generic hardware - target-disk override, /dev/sdX
 #      partition-suffix autodetect, NVMe-sanitize skipped on non-NVMe and
-#      tolerated when a drive doesn't implement it —
-#      plus a zenity disk-picker wrapper, a desktop icon, and NOPASSWD sudo
-#      for deck (remove /etc/sudoers.d/zz-deck-nopasswd on the installed
-#      system once you set a password).
+#      tolerated when a drive doesn't implement it -
+#      plus a zenity disk-picker wrapper, a desktop icon, and a limited
+#      passwordless installer command for deck. Ordinary sudo requires the
+#      account password.
 #
 # Options:
 #   --driver SPEC      Which NVIDIA driver to install. "latest" (default) =
 #                      whatever current Arch ships. Otherwise a branch or
-#                      version prefix — 580, 580.105.08, 580.105.08-4 — and
+#                      version prefix - 580, 580.105.08, 580.105.08-4 - and
 #                      the newest matching build is taken from the Arch
 #                      archive. SteamOS itself ships 575.x; nvidia-open
 #                      needs Turing (RTX 20xx) or newer whichever you pick.
 #   --hold-updates     Hard-hold OS updates instead of self-healing (Steam
 #                      always shows "up to date").
-#   --no-hold-updates  Stock update behaviour — DANGER: an OS update boots an
+#   --no-hold-updates  Stock update behaviour - DANGER: an OS update boots an
 #                      unpatched system (A/B fallback saves you, driver lost).
 #   --no-installer     Skip step 4 (produce a plain bootable patched OS).
 #   --trim-cuda        Drop CUDA/OpenCL/NVVM/OptiX libs (~350 MB smaller).
 #   --skip-sigcheck    Disable pacman signature checks in the build chroot.
 #   --workdir DIR      Build dir (~3 GB; default: alongside the output).
-#                      Kept between runs — caches the driver build.
+#                      Kept between runs - caches the driver build.
 #
 # Host needs: Arch-ish Linux, losetup, btrfs-progs, rsync, curl, kmod, zstd,
 # python3, readelf (binutils).
@@ -86,47 +86,128 @@ TRIM_CUDA=0
 SKIP_SIG=0
 DRIVER_SPEC=latest     # latest | <branch or version prefix, e.g. 580>
 WORKDIR=""
+INSTALLER_UPDATE_SOURCE=""
+MANGOAPP_DIR=""
+GAMESCOPE_DIR=""
+REMOTE_PLAY_DIR=""
+NVENC_DIR=""
 IMG=""
+ADD_XPADNEO=0
+EXPERIMENTAL_BETA=0
+EXPERIMENTAL_PREVIEW=0
+XPADNEO_VERSION=v0.10.4
 
+ORIGINAL_ARGS=("$@")
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --driver)          DRIVER_SPEC="${2:?--driver needs an argument}"; shift ;;
+    --experimental-beta) EXPERIMENTAL_BETA=1 ;;
+    --experimental-preview) EXPERIMENTAL_PREVIEW=1 ;;
     --hold-updates)    UPDATE_MODE=hold ;;
     --no-hold-updates) UPDATE_MODE=stock ;;
     --no-installer)    ADD_INSTALLER=0 ;;
     --trim-cuda)       TRIM_CUDA=1 ;;
+    --xpadneo)         ADD_XPADNEO=1 ;;
+    --no-xpadneo)      ADD_XPADNEO=0 ;;
+    --xpadneo-version) XPADNEO_VERSION="${2:?--xpadneo-version needs an argument}"; ADD_XPADNEO=1; shift ;;
     --skip-sigcheck)   SKIP_SIG=1 ;;
+    --nvenc-dir) NVENC_DIR="${2:?--nvenc-dir needs an artifact directory}"; shift ;;
+    --remote-play-dir) REMOTE_PLAY_DIR="${2:?--remote-play-dir needs an artifact directory}"; shift ;;
+    --gamescope-dir) GAMESCOPE_DIR="${2:?--gamescope-dir needs an artifact directory}"; shift ;;
+    --mangoapp-dir) MANGOAPP_DIR="${2:?--mangoapp-dir needs an artifact directory}"; shift ;;
+    --installer-update-source) INSTALLER_UPDATE_SOURCE="${2:?--installer-update-source needs a JSON source file}"; shift ;;
     --workdir)         WORKDIR="${2:?--workdir needs an argument}"; shift ;;
-    -h|--help)         sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)
+      sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'
+      printf '\n  --experimental-beta  Select SteamOS beta for this test image (selfheal only).\n'
+      printf '  --experimental-preview  Select SteamOS Preview for this test image (selfheal only).\n'
+      printf '\n  --nvenc-dir DIR  Include experimental 32-bit VAAPI to NVENC bridge.\n'
+      printf '\n  --remote-play-dir DIR  Include experimental SDR Remote Play receiver.\n'
+      printf '\n  --gamescope-dir DIR  Include experimental stable capture correction.\n'
+      printf '\n  --mangoapp-dir DIR  Include the corrected MangoApp artifact.\n'
+      printf '\n  --installer-update-source FILE  Configure signed installer release updates.\n'
+      printf '\n  --xpadneo          Include optional xpadneo and rebuild it on OS updates.\n'
+      printf '  --no-xpadneo       Build without xpadneo (default).\n'
+      printf '  --xpadneo-version  Exact tag, such as v0.10.4 (also enables xpadneo).\n'
+      exit 0 ;;
     -*)                die "Unknown option: $1" ;;
-    *)                 IMG="$1" ;;
+    *)                 [[ -z "$IMG" ]] || die "Only one input image is allowed"; IMG="$1" ;;
   esac
   shift
 done
 
+[[ "$XPADNEO_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "Use an exact xpadneo tag such as v0.10.4"
+[[ $EXPERIMENTAL_BETA == 0 || $EXPERIMENTAL_PREVIEW == 0 ]] || die "Choose one experimental channel"
+[[ $EXPERIMENTAL_PREVIEW == 0 || $UPDATE_MODE == selfheal ]] || die "Experimental Preview requires self-healing updates"
+[[ $EXPERIMENTAL_BETA == 0 || $UPDATE_MODE == selfheal ]] || die "Experimental beta requires self-healing updates"
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+[[ -f "$SCRIPT_DIR/VERSION" ]] || die "Missing VERSION. Clone the full repository before building."
+INSTALLER_VERSION="$(cat "$SCRIPT_DIR/VERSION")"
+[[ "$INSTALLER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] \
+  || die "Invalid installer VERSION"
+log "Installer version: $INSTALLER_VERSION"
+[[ -f "$SCRIPT_DIR/lib/pc-support.sh" && -f "$SCRIPT_DIR/scripts/steamos-nvidia-diagnostics" && -f "$SCRIPT_DIR/scripts/hdr-defaults.py" && -f "$SCRIPT_DIR/scripts/safe-graphics.py" && -f "$SCRIPT_DIR/scripts/bluetooth-resume.py" && -f "$SCRIPT_DIR/scripts/install-target.py" && -f "$SCRIPT_DIR/scripts/patch-repair.py" ]] \
+  || die "Missing support files. Clone the full repository before building."
+# shellcheck source=lib/pc-support.sh
+source "$SCRIPT_DIR/lib/pc-support.sh"
 [[ $EUID -eq 0 ]] || die "Run as root (sudo)."
+if [[ -n "$NVENC_DIR" ]]; then
+  NVENC_DIR="$(realpath "$NVENC_DIR")"
+  [[ -r "$NVENC_DIR/nvenc-build.json" ]] || die "Incomplete NVENC artifact"
+fi
+if [[ -n "$REMOTE_PLAY_DIR" ]]; then
+  REMOTE_PLAY_DIR="$(realpath "$REMOTE_PLAY_DIR")"
+  [[ -r "$REMOTE_PLAY_DIR/remote-play-build.json" ]] || die "Incomplete Remote Play artifact"
+fi
+if [[ -n "$GAMESCOPE_DIR" ]]; then
+  [[ $EXPERIMENTAL_BETA == 0 && $EXPERIMENTAL_PREVIEW == 0 ]] || die "Gamescope capture backport is for stable test images only"
+  GAMESCOPE_DIR="$(realpath "$GAMESCOPE_DIR")"
+  for file in root/usr/bin/gamescope gamescope-build.json Gamescope-LICENSE; do
+    [[ -r "$GAMESCOPE_DIR/$file" ]] || die "Incomplete Gamescope artifact"
+  done
+fi
+if [[ -n "$MANGOAPP_DIR" ]]; then
+  MANGOAPP_DIR="$(realpath "$MANGOAPP_DIR")"
+  for file in mangoapp mangoapp-build.json MangoHud-LICENSE; do
+    [[ -r "$MANGOAPP_DIR/$file" ]] || die "Incomplete MangoApp artifact"
+  done
+fi
+if [[ -n "$INSTALLER_UPDATE_SOURCE" ]]; then
+  [[ $UPDATE_MODE == selfheal && -r "$INSTALLER_UPDATE_SOURCE" ]] || die "Installer updates need self-healing mode and a readable source file"
+  INSTALLER_UPDATE_SOURCE="$(realpath "$INSTALLER_UPDATE_SOURCE")"
+fi
+# Keep build mounts out of udev and other host service namespaces.
+# Otherwise lazy unmounts can leave the output image open after completion.
+# A PID namespace also removes chroot daemons before the caller can hash the image.
+if [[ "${STEAMOS_NVIDIA_PRIVATE_MOUNTS:-0}" != 1 ]]; then
+  command -v unshare >/dev/null || die "Missing host tool: unshare"
+  exec unshare --mount --pid --fork --kill-child --mount-proc --propagation private -- env STEAMOS_NVIDIA_PRIVATE_MOUNTS=1 bash "$0" "${ORIGINAL_ARGS[@]}"
+fi
 [[ "$DRIVER_SPEC" == latest || "$DRIVER_SPEC" =~ ^[0-9]+(\.[0-9]+)*(-[0-9]+)?$ ]] \
   || die "--driver takes 'latest' or a version prefix like 580 / 580.105.08 / 580.105.08-4"
 if [[ -z "$IMG" ]]; then
-  # No image given — look for exactly one clean repair image next to the script.
+  # No image given - look for exactly one clean repair image next to the script.
   script_dir="$(dirname "$(realpath "$0")")"
   mapfile -t candidates < <(find "$script_dir" -maxdepth 1 -name '*.img' ! -name '*-nvidia*.img' | sort)
   case ${#candidates[@]} in
     0) die "No image given and no *.img found in $script_dir. Usage: $0 [options] <clean-oobe-repair.img>" ;;
     1) IMG="${candidates[0]}"; log "Auto-detected image: $IMG" ;;
-    *) die "Multiple images in $script_dir — pass one explicitly:$(printf '\n  %s' "${candidates[@]}")" ;;
+    *) die "Multiple images in $script_dir - pass one explicitly:$(printf '\n  %s' "${candidates[@]}")" ;;
   esac
 fi
 [[ -f "$IMG" ]] || die "Image not found: $IMG"
-for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd pacman python3 readelf; do
+for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd pacman python3 readelf modinfo flock sha256sum timeout; do
   command -v "$tool" >/dev/null || die "Missing host tool: $tool"
 done
 
 IMG="$(realpath "$IMG")"
 OUT="${IMG%.img}-nvidia-usbinstall.img"
-# match the FILENAME only — the containing dir may itself be called
+# match the FILENAME only - the containing dir may itself be called
 # "steamos-nvidia-installer" (the repo clone), which must not trip this guard
-[[ "$(basename "$IMG")" == *-nvidia*.img ]] && die "Input looks like an already-patched image — start from the clean repair image."
+[[ "$(basename "$IMG")" == *-nvidia*.img ]] && die "Input looks like an already-patched image - start from the clean repair image."
+exec 9>/run/steamos-nvidia-build.lock
+flock -n 9 || die "Another image build is running"
+pc_require_space "$(dirname "$OUT")" 20000 || die "Free space check failed"
 [[ -e "$OUT" ]] && { warn "Removing previous output $OUT"; rm -f "$OUT"; }
 
 [[ -n "$WORKDIR" ]] || WORKDIR="$(dirname "$OUT")/.nvidia-usb-work"
@@ -168,7 +249,7 @@ mkdir -p "$MNT" "$EFIMNT" "$HOMEMNT" "$UPPER" "$OVLWORK" "$MERGED"
 # stale mounts from an interrupted previous run
 for m in "$MERGED" "$EFIMNT" "$HOMEMNT" "$MNT"; do
   if mountpoint -q "$m" 2>/dev/null; then
-    warn "Stale mount from a previous run at $m — unmounting"
+    warn "Stale mount from a previous run at $m - unmounting"
     umount -R "$m" 2>/dev/null || umount -Rl "$m"
   fi
 done
@@ -195,7 +276,7 @@ for part in "$LOOPDEV"p*; do
   esac
 done
 [[ -n "$ROOTPART" && -n "$EFIPART" && -n "$HOMEPART" ]] \
-  || die "rootfs-A/efi-A/home partitions not found — is this a SteamOS image?"
+  || die "rootfs-A/efi-A/home partitions not found - is this a SteamOS image?"
 
 FSUUID="$(blkid -p -s UUID -o value "$ROOTPART")"
 findmnt -rn -S "UUID=$FSUUID" >/dev/null 2>&1 \
@@ -239,8 +320,8 @@ JUPITER_REPO="$(awk -F'[][]' '/^\[jupiter-/{print $2; exit}' "$MNT/etc/pacman.co
 MIRROR="$(awk '/^Server/{print $3; exit}' "$MNT/etc/pacman.d/mirrorlist")"
 HDR_URL="${MIRROR/\$repo/$JUPITER_REPO}"
 HDR_URL="${HDR_URL/\$arch/x86_64}/${KPKG_NAME}-headers-${KPKG_VERREL}-x86_64.pkg.tar.zst"
-curl -sfIL "$HDR_URL" -o /dev/null \
-  || die "Exact-match headers not found in Valve's pool: $HDR_URL"
+pc_curl -fsSIL "$HDR_URL" -o /dev/null \
+  || die "Could not access exact-match headers in Valve's pool: $HDR_URL"
 log "Headers package: $(basename "$HDR_URL")"
 
 # -------------------------------------------- resolve the driver packages
@@ -249,7 +330,7 @@ log "Headers package: $(basename "$HDR_URL")"
 # takes the newest build of that branch out of the Arch archive instead.
 # Either way the resolved URLs are pinned to permanent
 # archive.archlinux.org paths (mirror URLs die when Arch bumps the version)
-# — the same URLs are recorded in the image for the self-heal repatch.
+# - the same URLs are recorded in the image for the self-heal repatch.
 ARCHIVE_URL=https://archive.archlinux.org/packages
 
 PKG_URLS=""            # pinned URLs, space-separated (also goes in driver.conf)
@@ -260,14 +341,14 @@ DRIVER_VERSION=""      # nvidia-utils pkgver-pkgrel
 NV_PKGVER=""           # pkgver only, for cross-package consistency check
 PIN_VER=""             # version pin_pkg just resolved
 
-# pin_pkg <pkg> <spec> — resolve one package and add it to the pinned set.
+# pin_pkg <pkg> <spec> - resolve one package and add it to the pinned set.
 # spec "latest" = what current Arch has (archive URL when it's there yet,
 # else the mirror); anything else = newest archived build whose version
 # starts with that prefix ("580", "580.105.08", "580.105.08-4").
 pin_pkg() {
-  local pkg="$1" spec="$2" repo ver file url
+  local pkg="$1" spec="$2" repo ver file url index
   if [[ "$spec" == latest ]]; then
-    read -r ver file repo < <(curl -sfL "https://archlinux.org/packages/search/json/?name=$pkg" \
+    read -r ver file repo < <(pc_curl -fsSL "https://archlinux.org/packages/search/json/?name=$pkg" \
       | python3 -c 'import json,sys
 r=[p for p in json.load(sys.stdin)["results"]
    if p["repo"] in ("core","extra","multilib") and p["arch"] == "x86_64"]
@@ -275,16 +356,17 @@ if not r: raise SystemExit(1)
 p=r[0]; print(p["pkgver"]+"-"+str(p["pkgrel"]), p["filename"], p["repo"])') \
       || die "Could not resolve $pkg from archlinux.org"
     url="$ARCHIVE_URL/${pkg:0:1}/$pkg/$file"
-    if ! curl -sfIL "$url" -o /dev/null; then
+    if ! pc_curl -fsSIL "$url" -o /dev/null; then
       url="https://geo.mirror.pkgbuild.com/$repo/os/x86_64/$file"
-      curl -sfIL "$url" -o /dev/null || die "$pkg $ver not on archive.archlinux.org nor the mirror"
-      warn "$pkg not yet in the Arch archive — pinning mirror URL (may go stale)"
+      pc_curl -fsSIL "$url" -o /dev/null || die "$pkg $ver not on archive.archlinux.org nor the mirror"
+      warn "$pkg not yet in the Arch archive - pinning mirror URL (may go stale)"
     fi
   else
     # the archive keeps every build ever released; newest match wins
-    file="$(curl -sfL "$ARCHIVE_URL/${pkg:0:1}/$pkg/" \
-            | grep -oE "${pkg}-${spec}[.-][^\"<]*-x86_64\.pkg\.tar\.zst" | sort -uV | tail -1 || true)"
-    [[ -n "$file" ]] || die "No $pkg build matching '$spec' in the Arch archive (bad --driver value, or no network)"
+    index="$(pc_curl -fsSL "$ARCHIVE_URL/${pkg:0:1}/$pkg/")" \
+      || die "Could not read the Arch archive index for $pkg; package availability is unknown"
+    file="$(printf '%s\n' "$index" | pc_package_matches "$pkg" "$spec" | sort -uV | tail -1 || true)"
+    [[ -n "$file" ]] || die "Archive index loaded, but no $pkg build matches '$spec'"
     ver="${file#"$pkg"-}"; ver="${ver%-x86_64.pkg.tar.zst}"
     url="$ARCHIVE_URL/${pkg:0:1}/$pkg/$file"
   fi
@@ -295,7 +377,7 @@ p=r[0]; print(p["pkgver"]+"-"+str(p["pkgrel"]), p["filename"], p["repo"])') \
   log "  $pkg $ver"
 }
 
-# fetch_pins — download whatever pin_pkg has added since the last call
+# fetch_pins - download whatever pin_pkg has added since the last call
 fetch_pins() {
   mkdir -p "$WORKDIR/pkgs"
   local i f
@@ -305,9 +387,8 @@ fetch_pins() {
       log "Cached: $f"
     else
       log "Downloading $f"
-      curl -sfL "${PKG_URL_ARR[$i]}" -o "$WORKDIR/pkgs/$f.part" \
-        || die "download failed: ${PKG_URL_ARR[$i]}"
-      mv "$WORKDIR/pkgs/$f.part" "$WORKDIR/pkgs/$f"
+      pc_download_package "${PKG_URL_ARR[$i]}" "$WORKDIR/pkgs/$f" \
+        || die "Could not download pinned package $f; no alternate version will be selected"
     fi
   done
   FETCHED=${#PKG_FILES[@]}
@@ -319,7 +400,7 @@ DRIVER_VERSION="$PIN_VER"; NV_PKGVER="${PIN_VER%-*}"
 log "Driver pinned: nvidia-open $DRIVER_VERSION"
 
 # Fetch nvidia-utils first: its own dependency list decides which support
-# packages have to come from Arch too — egl-wayland2 only became a
+# packages have to come from Arch too - egl-wayland2 only became a
 # dependency at 590, so pulling it in for older branches would be wrong.
 fetch_pins
 
@@ -331,13 +412,13 @@ COMPANION_SPEC="$DRIVER_SPEC"
 for pkg in nvidia-open-dkms lib32-nvidia-utils; do
   pin_pkg "$pkg" "$COMPANION_SPEC"
   [[ "$PIN_VER" == "$NV_PKGVER"-* ]] \
-    || die "Version skew: $pkg is $PIN_VER but nvidia-utils is $DRIVER_VERSION (mirror mid-update?) — retry in an hour"
+    || die "Version skew: $pkg is $PIN_VER but nvidia-utils is $DRIVER_VERSION (mirror mid-update?) - retry in an hour"
 done
 
 # ...plus the support packages Valve's frozen repo doesn't carry at all, so
 # they can only come from Arch. Every other nvidia-utils dependency
 # (libglvnd, egl-wayland, egl-gbm, egl-x11) is resolved inside the build
-# chroot from Valve's own mirror, which keeps the image self-consistent —
+# chroot from Valve's own mirror, which keeps the image self-consistent -
 # don't add them here. egl-wayland2 only became a dependency at branch 590,
 # so which of these apply depends on the driver actually chosen.
 ARCH_ONLY_DEPS=" egl-wayland2 "
@@ -365,13 +446,13 @@ for f in "${PKG_FILES[@]}"; do
   mkdir -p "$SCAN/${f%%.pkg.tar.zst}"
   tar -xf "$WORKDIR/pkgs/$f" -C "$SCAN/${f%%.pkg.tar.zst}"
 done
-# readelf fails on non-ELF executables (scripts) — mustn't kill the pipeline
+# readelf fails on non-ELF executables (scripts) - mustn't kill the pipeline
 MAX_GLIBC="$({ find "$SCAN" -type f \( -name '*.so*' -o -perm -111 \) \
   -exec readelf -V {} + 2>/dev/null || true; } | grep -o 'GLIBC_[0-9.]*' \
   | sed 's/^GLIBC_//' | sort -uV | tail -1)"
-[[ -n "$MAX_GLIBC" ]] || die "glibc scan found no ELF version references — scan broken?"
+[[ -n "$MAX_GLIBC" ]] || die "glibc scan found no ELF version references - scan broken?"
 if [[ "$(printf '%s\n' "$MAX_GLIBC" "$IMG_GLIBC" | sort -V | tail -1)" != "$IMG_GLIBC" ]]; then
-  die "Driver payload needs glibc $MAX_GLIBC but the image only has $IMG_GLIBC — current Arch has drifted too far; this needs the .run-installer approach instead"
+  die "Driver payload needs glibc $MAX_GLIBC but the image only has $IMG_GLIBC - current Arch has drifted too far; this needs the .run-installer approach instead"
 fi
 log "OK: payload needs at most glibc $MAX_GLIBC (image has $IMG_GLIBC)"
 rm -rf "$SCAN"
@@ -380,16 +461,46 @@ rm -rf "$SCAN"
 # A cached overlay from a previous run of a DIFFERENT driver version has to
 # go: pacman would happily downgrade in place, but the old version's stray
 # files and modules would ride along into the image. (The package cache in
-# $WORKDIR/pkgs is kept — only the build residue is thrown away.)
+# $WORKDIR/pkgs is kept - only the build residue is thrown away.)
 if compgen -G "$UPPER/usr/lib/holo/pacmandb/local/nvidia-utils-[0-9]*" >/dev/null; then
   CACHED_VER="$(basename "$(echo "$UPPER"/usr/lib/holo/pacmandb/local/nvidia-utils-[0-9]*)")"
   CACHED_VER="${CACHED_VER#nvidia-utils-}"
   if [[ "$CACHED_VER" != "$DRIVER_VERSION" ]]; then
-    log "Cached build is nvidia $CACHED_VER but $DRIVER_VERSION is pinned — clearing the build overlay"
+    log "Cached build is nvidia $CACHED_VER but $DRIVER_VERSION is pinned - clearing the build overlay"
     rm -rf "${UPPER:?}" "${OVLWORK:?}"
     mkdir -p "$UPPER" "$OVLWORK"
   fi
 fi
+
+# Reusing an overlay from another image or addon selection can mix kernels
+# and leave a disabled addon in the output. The package download cache is kept.
+CACHE_KEY="$( {
+  sha256sum "$IMG" "$SCRIPT_DIR/steamos-nvidia-installer.sh" "$SCRIPT_DIR/lib/pc-support.sh" "$SCRIPT_DIR/scripts/hdr-defaults.py" "$SCRIPT_DIR/scripts/safe-graphics.py" "$SCRIPT_DIR/scripts/bluetooth-resume.py" "$SCRIPT_DIR/scripts/install-target.py" "$SCRIPT_DIR/scripts/patch-repair.py"
+  sha256sum "$SCRIPT_DIR/VERSION"
+  if [[ -n "$NVENC_DIR" ]]; then
+    (cd "$NVENC_DIR" && find . -type f -print0 | sort -z | xargs -0 sha256sum)
+  fi
+  if [[ -n "$REMOTE_PLAY_DIR" ]]; then
+    (cd "$REMOTE_PLAY_DIR" && find . -type f -print0 | sort -z | xargs -0 sha256sum)
+  fi
+  if [[ -n "$GAMESCOPE_DIR" ]]; then
+    sha256sum "$GAMESCOPE_DIR/root/usr/bin/gamescope" "$GAMESCOPE_DIR/gamescope-build.json" "$GAMESCOPE_DIR/Gamescope-LICENSE"
+  fi
+  if [[ -n "$MANGOAPP_DIR" ]]; then
+    sha256sum "$MANGOAPP_DIR/mangoapp" "$MANGOAPP_DIR/mangoapp-build.json" "$MANGOAPP_DIR/MangoHud-LICENSE"
+  fi
+  if [[ -n "$INSTALLER_UPDATE_SOURCE" ]]; then
+    sha256sum "$INSTALLER_UPDATE_SOURCE" "$SCRIPT_DIR/scripts/installer-update.py" "$SCRIPT_DIR/scripts/installer-update-ui.py" "$SCRIPT_DIR/images/installer-update.png"
+  else
+    printf 'installer updates disabled\n'
+  fi
+  printf '%s\n' "$DRIVER_VERSION" "$ADD_XPADNEO" "$XPADNEO_VERSION"
+} | sha256sum | cut -d ' ' -f1)"
+if [[ ! -f "$WORKDIR/build-key" || "$(cat "$WORKDIR/build-key")" != "$CACHE_KEY" ]]; then
+  rm -rf "${UPPER:?}" "${OVLWORK:?}"
+  mkdir -p "$UPPER" "$OVLWORK"
+fi
+printf '%s\n' "$CACHE_KEY" > "$WORKDIR/build-key"
 
 log "Setting up overlay build chroot (build residue stays out of the image)"
 # index=off: allows reusing the upperdir even if a lazily-unmounted overlay
@@ -414,19 +525,19 @@ fi
 if [[ $SKIP_SIG -eq 0 && ! -d "$MERGED/etc/pacman.d/gnupg/private-keys-v1.d" ]]; then
   log "Initialising pacman keyring in chroot"
   in_chroot "pacman-key --init && pacman-key --populate" \
-    || die "Keyring init failed — rerun with --skip-sigcheck if you accept unsigned installs"
+    || die "Keyring init failed - rerun with --skip-sigcheck if you accept unsigned installs"
 fi
 
 # Resume: if a previous run already built everything in the overlay for THIS
 # driver version, skip the download/compile and go straight to payload
 # extraction. (Version check matters: Arch may have bumped since the cached
-# build — then the overlay must be brought up to the newly pinned version.)
+# build - then the overlay must be brought up to the newly pinned version.)
 if compgen -G "$UPPER/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null \
    && [[ "$(in_chroot "pacman -Q nvidia-utils 2>/dev/null" | awk '{print $2}')" == "$DRIVER_VERSION" ]]; then
-  log "Overlay already contains a built nvidia $DRIVER_VERSION module — reusing previous build"
+  log "Overlay already contains a built nvidia $DRIVER_VERSION module - reusing previous build"
 else
   log "Downloading exact-match kernel headers"
-  in_chroot "curl -sfL '$HDR_URL' -o /tmp/headers.pkg.tar.zst"
+  pc_download "$HDR_URL" "$MERGED/tmp/headers.pkg.tar.zst" || die "Could not download exact-match kernel headers"
 
   log "Refreshing pacman databases"
   in_chroot "pacman --config $PACCONF -Sy"
@@ -439,10 +550,10 @@ else
   rm -rf "$MERGED/tmp/nvpkgs"; mkdir -p "$MERGED/tmp/nvpkgs"
   for f in "${PKG_FILES[@]}"; do cp "$WORKDIR/pkgs/$f" "$MERGED/tmp/nvpkgs/"; done
   in_chroot "pacman --config $PACCONF -U $PACOPTS /tmp/nvpkgs/*.pkg.tar.zst" \
-    || die "pacman -U failed. If it was a signature/keyring error (frozen image keyring vs current Arch packagers), rerun with --skip-sigcheck — the packages came over HTTPS from Arch infrastructure."
+    || die "pacman -U failed. If it was a signature/keyring error (frozen image keyring vs current Arch packagers), rerun with --skip-sigcheck - the packages came over HTTPS from Arch infrastructure."
 
   if ! compgen -G "$MERGED/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null; then
-    log "DKMS hook didn't build for $KVER — forcing"
+    log "DKMS hook didn't build for $KVER - forcing"
     in_chroot "dkms autoinstall -k $KVER"
     compgen -G "$MERGED/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null \
       || die "nvidia module failed to build for $KVER (check output above)"
@@ -450,38 +561,57 @@ else
 fi
 NVIDIA_VER="$(in_chroot "pacman -Q nvidia-utils" | awk '{print $2}')"
 [[ "$NVIDIA_VER" == "$DRIVER_VERSION" ]] \
-  || die "Chroot has nvidia-utils $NVIDIA_VER but $DRIVER_VERSION was pinned — stale overlay? Delete $WORKDIR and rerun."
+  || die "Chroot has nvidia-utils $NVIDIA_VER but $DRIVER_VERSION was pinned - stale overlay? Delete $WORKDIR and rerun."
 log "Built nvidia-open $NVIDIA_VER for $KVER"
+
+mkdir -p "$MNT/usr/lib/steamos-nvidia"
+install -m 644 "$SCRIPT_DIR/lib/pc-support.sh" "$MNT/usr/lib/steamos-nvidia/pc-support.sh"
+install -m 644 "$SCRIPT_DIR/scripts/hdr-defaults.py" "$MNT/usr/lib/steamos-nvidia/hdr-defaults.py"
+install -m 755 "$SCRIPT_DIR/scripts/safe-graphics.py" "$MNT/usr/lib/steamos-nvidia/safe-graphics.py"
+install -m 755 "$SCRIPT_DIR/scripts/bluetooth-resume.py" "$MNT/usr/lib/steamos-nvidia/bluetooth-resume.py"
+install -m 755 "$SCRIPT_DIR/scripts/install-target.py" "$MNT/usr/lib/steamos-nvidia/install-target.py"
+install -m 755 "$SCRIPT_DIR/scripts/steamos-nvidia-diagnostics" "$MNT/usr/bin/steamos-nvidia-diagnostics"
+XPADNEO_SHA256=""
+if [[ $ADD_XPADNEO -eq 1 ]]; then
+  # Keep the exact source archive on the system for subsequent kernel updates.
+  XPADNEO_ARCHIVE="$MNT/usr/lib/steamos-nvidia/xpadneo-source.tar.gz"
+  curl -fL --retry 3 --connect-timeout 30 \
+    "https://github.com/atar-axis/xpadneo/archive/refs/tags/$XPADNEO_VERSION.tar.gz" \
+    -o "$XPADNEO_ARCHIVE.part" || die "Could not download xpadneo"
+  mv "$XPADNEO_ARCHIVE.part" "$XPADNEO_ARCHIVE"
+  XPADNEO_SHA256="$(sha256sum "$XPADNEO_ARCHIVE" | cut -d ' ' -f1)"
+  pc_install_xpadneo "$MNT" "$MERGED" "$XPADNEO_ARCHIVE" "$XPADNEO_VERSION" "$KVER"
+fi
 
 # SteamOS's lib32-mangohud is missing a dependency: /usr/lib32/libMangoHud.so
 # (and libMangoHud_opengl.so) carry a hard DT_NEEDED on libxkbcommon.so.0, but
 # the image ships only the 64-bit libxkbcommon. The gamescope session preloads
 # the overlay system-wide, so any game with a 32-bit component or anti-cheat
-# helper fails the preload — seen as a SIGSEGV a minute or two after launch.
+# helper fails the preload - seen as a SIGSEGV a minute or two after launch.
 # Taken from the image's OWN frozen mirror (multilib-3.8.1x carries 1.10.0-1,
 # matching the 64-bit libxkbcommon already installed), so no current-Arch
 # library enters the image. Sits outside the resume branch above so a warm
 # --workdir predating this still picks it up; --needed makes it a no-op after
-# that. Joins the payload automatically via the pacman -Qq diff below.
+# that. Joins the payload automatically via the package version comparison.
 log "Installing lib32-libxkbcommon (missing dep of SteamOS's lib32-mangohud)"
-in_chroot "pacman --config $PACCONF -Sy" || warn "pacman -Sy failed — trying the cached db"
+in_chroot "pacman --config $PACCONF -Sy" || warn "pacman -Sy failed - trying the cached db"
 in_chroot "pacman --config $PACCONF -S $PACOPTS lib32-libxkbcommon" \
   || die "could not install lib32-libxkbcommon from the image's frozen mirror"
 
-# "Before" = the pristine image's own pacman db (read directly, host-side) —
+# "Before" = the pristine image's own pacman db (read directly, host-side) -
 # NOT the chroot's, whose db carries installs cached in the overlay upper
 # layer from previous runs and would make the diff come out empty.
-pacman -Qq --dbpath "$MNT/usr/lib/holo/pacmandb" | LC_ALL=C sort > "$WORKDIR/pkgs-before.txt"
-in_chroot "pacman -Qq" | LC_ALL=C sort > "$WORKDIR/pkgs-after.txt"
+pacman -Q --dbpath "$MNT/usr/lib/holo/pacmandb" | LC_ALL=C sort > "$WORKDIR/pkgs-before.txt"
+in_chroot "pacman -Q" | LC_ALL=C sort > "$WORKDIR/pkgs-after.txt"
 
 # ----------------------------------------------------- compute the payload
 # New packages minus build-only toolchain = what ships in the image.
 # nvidia-open-dkms is build-only too: it's the module SOURCE (~70 MB); the
 # compiled module is copied from /usr/lib/modules separately.
 BUILD_ONLY_RE='^(dkms|nvidia-open-dkms|patch|gcc|gcc-libs|make|binutils|libisl|libmpc|mpfr|pahole|python-setuptools|linux-neptune.*-headers|.*-headers)$'
-mapfile -t NEW_PKGS < <(LC_ALL=C comm -13 "$WORKDIR/pkgs-before.txt" "$WORKDIR/pkgs-after.txt" \
+mapfile -t NEW_PKGS < <(pc_changed_packages "$WORKDIR/pkgs-before.txt" "$WORKDIR/pkgs-after.txt" \
                         | grep -Ev "$BUILD_ONLY_RE")
-[[ ${#NEW_PKGS[@]} -gt 0 ]] || die "Payload package list came out empty — check $WORKDIR/pkgs-*.txt"
+[[ ${#NEW_PKGS[@]} -gt 0 ]] || die "Payload package list came out empty - check $WORKDIR/pkgs-*.txt"
 log "Payload packages: ${NEW_PKGS[*]}"
 
 FILELIST="$WORKDIR/payload-files.txt"
@@ -497,7 +627,7 @@ if [[ $TRIM_CUDA -eq 1 ]]; then
 fi
 sed 's|^/||' "$FILELIST" > "$FILELIST.rel"
 
-# Space check: pacman -Qlq lists directories too — size only files/symlinks.
+# Space check: pacman -Qlq lists directories too - size only files/symlinks.
 PAYLOAD_MB="$(set +o pipefail; cd "$MERGED" && while IFS= read -r p; do
     if [[ -f "$p" || -L "$p" ]]; then printf '%s\0' "$p"; fi
   done < "$FILELIST.rel" | { du -scm --no-dereference --files0-from=- 2>/dev/null || true; } | tail -1 | cut -f1)"
@@ -505,25 +635,30 @@ PAYLOAD_MB="$(set +o pipefail; cd "$MERGED" && while IFS= read -r p; do
 MODULES_MB="$(du -sm "$UPPER/usr/lib/modules/$KVER/updates" | cut -f1)"
 AVAIL_MB="$(df -m --output=avail "$MNT" | tail -1 | tr -d ' ')"
 log "Payload ≈ ${PAYLOAD_MB} MB files + ${MODULES_MB} MB modules (before btrfs zstd); rootfs has ${AVAIL_MB} MB free"
-if (( PAYLOAD_MB + MODULES_MB > AVAIL_MB * 2 )); then   # zstd roughly halves it
-  die "Not enough space in rootfs. Rerun with --trim-cuda."
+# The destination is a disposable copy mounted with Btrfs compression.
+# Uncompressed sizes are useful diagnostics, not an allocation estimate.
+pc_require_space "$MNT" 256 || die "Rootfs needs at least 256 MiB free before copying"
+if (( PAYLOAD_MB + MODULES_MB + 256 > AVAIL_MB )); then
+  warn "Uncompressed payload exceeds free space; checking actual Btrfs allocation after copying"
 fi
 
 # --------------------------------------------------- install into rootfs
 log "Copying driver payload into the image rootfs"
-rsync -a --files-from="$FILELIST.rel" "$MERGED/" "$MNT/"
-rsync -a "$UPPER/usr/lib/modules/$KVER/updates" "$MNT/usr/lib/modules/$KVER/"
+rsync -a --files-from="$FILELIST.rel" "$MERGED/" "$MNT/"   || die "Driver copy failed; the output image is incomplete"
+rsync -a "$UPPER/usr/lib/modules/$KVER/updates" "$MNT/usr/lib/modules/$KVER/"   || die "Module copy failed; the output image is incomplete"
+# Btrfs compression and delayed allocation must finish before checking space.
+sync -f "$MNT"
+pc_require_space "$MNT" 256   || die "Less than 256 MiB remains after copying; the output image is incomplete"
 
 log "Registering payload packages in the image's pacman db"
 for pkg in "${NEW_PKGS[@]}"; do
-  for ENTRY in "$UPPER/usr/lib/holo/pacmandb/local/$pkg"-[0-9]*; do
-    [[ -d "$ENTRY" ]] && rsync -a "$ENTRY" "$MNT/usr/lib/holo/pacmandb/local/" && break
-  done
+  pc_copy_package_db "$MERGED" "$MNT" "$pkg"
 done
 
 log "Running depmod + ldconfig in the image"
 chroot "$MNT" depmod "$KVER"
 chroot "$MNT" ldconfig
+pc_write_userspace_report "$MNT" || die "NVIDIA userspace dependencies are incompatible; see userspace-check.txt in the image"
 
 log "Writing modprobe config (blacklist nouveau, enable nvidia KMS)"
 cat > "$MNT/etc/modprobe.d/99-nvidia-patch.conf" <<'EOF'
@@ -544,22 +679,26 @@ chroot "$MNT" systemctl enable nvidia-suspend nvidia-resume nvidia-hibernate 2>/
 # launch ("always start with a fresh steam per boot"). Installed systems
 # are a clone of the running USB, so every boot wiped the user's Steam
 # login, settings and installed games until the first OS update swapped in
-# the normal wrapper — and any later reflash brought the wipe back
+# the normal wrapper - and any later reflash brought the wipe back
 # (issue #6). Neutralise just the delete; the wrapper's bootstrap handling
 # is left alone.
-if [[ -f "$MNT/usr/bin/steam" ]] \
-   && grep -q 'rm -rf --one-file-system.*STEAM_LINKS' "$MNT/usr/bin/steam"; then
+# Resolve absolute symlinks inside the image, not against the build host.
+STEAM_WRAPPER_PATH="$(chroot "$MNT" readlink -f /usr/bin/steam)"
+[[ "$STEAM_WRAPPER_PATH" == /* ]] || die "Could not resolve the image Steam wrapper"
+STEAM_WRAPPER="$MNT$STEAM_WRAPPER_PATH"
+if [[ -f "$STEAM_WRAPPER" ]] \
+   && grep -q 'rm -rf --one-file-system.*STEAM_LINKS' "$STEAM_WRAPPER"; then
   log "Disabling the OOBE steam wrapper's per-boot Steam data wipe"
   sed -i '/rm -rf --one-file-system.*STEAM_LINKS/ s|.*|  : # per-boot Steam data wipe disabled by steamos-nvidia-installer|' \
-    "$MNT/usr/bin/steam"
-  grep -q 'wipe disabled by steamos-nvidia-installer' "$MNT/usr/bin/steam" \
+    "$STEAM_WRAPPER"
+  grep -q 'wipe disabled by steamos-nvidia-installer' "$STEAM_WRAPPER" \
     || die "steam wrapper patch failed"
 else
-  warn "OOBE steam wrapper wipe not found — skipping (upstream wrapper may have changed)"
+  warn "OOBE steam wrapper wipe not found - skipping (upstream wrapper may have changed)"
 fi
 
 # --------------------------------------------------------- update strategy
-# OOBE day-1 auto-migration stays masked in all modes except stock — a
+# OOBE day-1 auto-migration stays masked in all modes except stock - a
 # surprise multi-GB update mid-first-boot is bad UX even when self-healing.
 if [[ $UPDATE_MODE != stock ]]; then
   [[ -f "$MNT/usr/lib/systemd/system/steamos-finish-oobe-migration.service" ]] \
@@ -589,29 +728,47 @@ if [[ $UPDATE_MODE == selfheal ]]; then
   log "Installing self-healing update machinery"
   mkdir -p "$MNT/usr/lib/steamos-nvidia"
 
-  # pinned driver record — repatch installs these exact packages (instead of
+  # pinned driver record - repatch installs these exact packages (instead of
   # the slot's frozen repo, which is what the valve-driver variant does)
   cat > "$MNT/usr/lib/steamos-nvidia/driver.conf" <<EOF
 # Written by steamos-nvidia-installer at image build time.
 # repatch.sh installs the driver from these pinned URLs; to move to a newer
-# driver later, rebuild the USB image with the latest script and reinstall
-# (or update this file by hand with matching-version package URLs).
+# driver later, use steamos-nvidia-driver to prepare the inactive slot.
+# Do not edit these pins by hand during an update.
 DRIVER_SPEC="$DRIVER_SPEC"
 DRIVER_VERSION="$DRIVER_VERSION"
 PKG_URLS="$PKG_URLS"
+ADD_XPADNEO=$ADD_XPADNEO
+XPADNEO_VERSION="$XPADNEO_VERSION"
+XPADNEO_SHA256="$XPADNEO_SHA256"
+TRIM_CUDA=$TRIM_CUDA
 EOF
   chmod 644 "$MNT/usr/lib/steamos-nvidia/driver.conf"
 
   # ---- on-device re-patch tool: rebuilds the driver inside the OTHER slot
   cat > "$MNT/usr/lib/steamos-nvidia/repatch.sh" <<'REPATCH'
 #!/bin/bash
-# steamos-nvidia repatch — rebuild + install the NVIDIA driver into another
+# steamos-nvidia repatch - rebuild + install the NVIDIA driver into another
 # partition set (normally "other", right after an OS update staged there).
 # Run as root. Idempotent: exits 0 immediately if the slot already has the
 # driver for its kernel. Logs to stdout (the update wrapper redirects).
 set -euo pipefail
 
 PARTSET="${1:-other}"
+[[ "$PARTSET" == other ]] || { echo "Only the inactive partset 'other' may be patched." >&2; exit 1; }
+exec 9>/run/steamos-nvidia-repatch.lock
+flock -n 9 || { echo "Another driver repair is running." >&2; exit 1; }
+# shellcheck source=lib/pc-support.sh
+source /usr/lib/steamos-nvidia/pc-support.sh
+# shellcheck source=/dev/null
+DRIVER_CONFIG="$(/usr/bin/python3 -I /usr/lib/steamos-nvidia/driver-change.py request-config)"
+source "$DRIVER_CONFIG"
+: "${ADD_XPADNEO:=0}" "${XPADNEO_VERSION:=v0.10.4}" "${XPADNEO_SHA256:=}" "${TRIM_CUDA:=0}"
+FINGERPRINT="$( { sha256sum < "$DRIVER_CONFIG"; sha256sum /usr/lib/steamos-nvidia/pc-support.sh /usr/lib/steamos-nvidia/hdr-defaults.py /usr/lib/steamos-nvidia/safe-graphics.py /usr/lib/steamos-nvidia/bluetooth-resume.py /usr/lib/steamos-nvidia/install-target.py /usr/lib/steamos-nvidia/driver-change.py /usr/lib/steamos-nvidia/driver-stage.sh /usr/lib/steamos-nvidia/driver-manager.py /usr/lib/steamos-nvidia/repatch.sh; } | sha256sum | cut -d ' ' -f1)"
+EXPECTED_XPADNEO=""
+[[ $ADD_XPADNEO -eq 0 ]] || EXPECTED_XPADNEO="$XPADNEO_VERSION"
+WAS_RO=0
+SUCCESS=0
 log() { echo "[repatch] $*"; }
 die() { echo "[repatch] FAIL: $*" >&2; exit 1; }
 
@@ -619,16 +776,28 @@ ROOTDEV="/dev/disk/by-partsets/$PARTSET/rootfs"
 EFIDEV="/dev/disk/by-partsets/$PARTSET/efi"
 [[ -b "$ROOTDEV" && -b "$EFIDEV" ]] || die "partset '$PARTSET' not found (single-slot system?)"
 
+ACTIVE_ID="$(pc_active_root_id)" || die "Cannot identify the active root block device"
+TARGET_ID="$(lsblk -dn -o MAJ:MIN "$ROOTDEV")"
+[[ -n "$ACTIVE_ID" && -n "$TARGET_ID" && "$ACTIVE_ID" != "$TARGET_ID" ]] \
+  || die "Cannot verify that the target is an inactive rootfs"
+pc_require_space /home 9216 || die "Not enough build space on /home"
 NEWROOT="$(mktemp -d /tmp/repatch-root.XXXXXX)"
 # SteamOS /home is ext4 with casefold enabled, which overlayfs rejects as an
-# upperdir — so the build workspace lives inside a plain ext4 loopback image
+# upperdir - so the build workspace lives inside a plain ext4 loopback image
 # on /home (space for the build, no casefold).
-WORKIMG=/home/.steamos-nvidia-work.img
+WORKIMG="$(mktemp /home/.steamos-nvidia-work.XXXXXX.img)"
 WORK="$(mktemp -d /tmp/repatch-work.XXXXXX)"
 UPPER="$WORK/upper"; OVLWORK="$WORK/ovlwork"; MERGED="$WORK/merged"
 
 cleanup() {
   set +e
+  if mountpoint -q "$NEWROOT"; then
+    if [[ $SUCCESS -eq 0 ]]; then
+      rm -f "$NEWROOT/usr/lib/steamos-nvidia/complete" "$NEWROOT/usr/lib/steamos-nvidia/complete.part"
+    fi
+    btrfs filesystem sync "$NEWROOT"
+    [[ $WAS_RO -eq 0 ]] || btrfs property set "$NEWROOT" ro true
+  fi
   for m in "$MERGED"/dev/pts "$MERGED"/dev "$MERGED"/sys "$MERGED"/proc "$MERGED" \
            "$NEWROOT"/efi "$NEWROOT"/dev/pts "$NEWROOT"/dev "$NEWROOT"/sys "$NEWROOT"/proc "$NEWROOT" \
            "$WORK"; do
@@ -639,7 +808,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-rm -f "$WORKIMG"
 truncate -s 8G "$WORKIMG"
 mkfs.ext4 -q -F "$WORKIMG"
 mount -o loop "$WORKIMG" "$WORK"
@@ -647,6 +815,7 @@ mkdir -p "$UPPER" "$OVLWORK" "$MERGED"
 
 log "Mounting $ROOTDEV"
 mount -o compress-force=zstd:3 "$ROOTDEV" "$NEWROOT"
+/usr/bin/python3 -I /usr/lib/steamos-nvidia/driver-change.py check-target "$NEWROOT"
 WAS_RO=0
 if [[ "$(btrfs property get "$NEWROOT" ro)" == "ro=true" ]]; then
   WAS_RO=1; btrfs property set "$NEWROOT" ro false
@@ -659,11 +828,37 @@ done
 [[ -n "$KVER" ]] || die "no neptune kernel in $PARTSET rootfs"
 log "Target kernel: $KVER"
 
-if compgen -G "$NEWROOT/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null; then
-  log "Driver already present for $KVER — nothing to do"
-  [[ $WAS_RO -eq 1 ]] && btrfs property set "$NEWROOT" ro true
+mkdir -p "$NEWROOT/efi"
+mount "$EFIDEV" "$NEWROOT/efi"
+# Integration-only transactions clone the same OS and keep its existing driver.
+# Verify that driver instead of downloading and compiling it again.
+if [[ -f /usr/lib/steamos-nvidia/installer-update.py ]] && [[ $(/usr/bin/python3 -I /usr/lib/steamos-nvidia/installer-update.py request-mode) == integration ]]; then
+  /usr/bin/python3 -I /usr/lib/steamos-nvidia/installer-update.py apply-target "$NEWROOT" || die "Installer integration update failed"
+  # shellcheck disable=SC1091
+  source "$NEWROOT/usr/lib/steamos-nvidia/pc-support.sh"
+  pc_check_driver "$NEWROOT" "$KVER" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" || die "Driver validation failed"
+  pc_check_addons "$NEWROOT" || die "Addon validation failed"
+  pc_write_userspace_report "$NEWROOT" || die "NVIDIA library validation failed"
+  pc_write_runtime_info "$NEWROOT" "$KVER" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" "$TRIM_CUDA"
+  pc_require_space "$NEWROOT" 256 || die "Insufficient target space"
+  pc_write_complete "$NEWROOT" "$KVER" "$FINGERPRINT"
+  pc_slot_complete "$NEWROOT" "$KVER" "$FINGERPRINT" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" || die "Slot validation failed"
+  btrfs filesystem sync "$NEWROOT"
+  sync -f "$NEWROOT"; sync -f "$NEWROOT/efi"
+  [[ $WAS_RO -eq 0 ]] || btrfs property set "$NEWROOT" ro true
+  /usr/bin/python3 -I /usr/lib/steamos-nvidia/driver-change.py mark-ready
+  SUCCESS=1
+  log "Installer tools updated; NVIDIA driver retained"
   exit 0
 fi
+if pc_slot_complete "$NEWROOT" "$KVER" "$FINGERPRINT" "$DRIVER_VERSION" "$EXPECTED_XPADNEO"; then
+  log "The complete driver installation has already been checked for $KVER"
+  /usr/bin/python3 -I /usr/lib/steamos-nvidia/driver-change.py mark-ready
+  SUCCESS=1
+  exit 0
+fi
+rm -f "$NEWROOT/usr/lib/steamos-nvidia/complete"
+
 
 PACDB="$NEWROOT/usr/lib/holo/pacmandb/local"
 KPKG_DIR=""
@@ -681,7 +876,7 @@ MIRROR="$(awk '/^Server/{print $3; exit}' "$NEWROOT/etc/pacman.d/mirrorlist")"
 HDR_URL="${MIRROR/\$repo/$JUPITER_REPO}"
 HDR_URL="${HDR_URL/\$arch/x86_64}/${KPKG_NAME}-headers-${KPKG_VERREL}-x86_64.pkg.tar.zst"
 log "Headers: $(basename "$HDR_URL")"
-curl -sfIL "$HDR_URL" -o /dev/null || die "matching headers not in Valve's pool: $HDR_URL"
+pc_curl -fsSIL "$HDR_URL" -o /dev/null || die "could not access matching headers in Valve's pool: $HDR_URL"
 
 log "Building driver in overlay chroot (this takes 10-20 minutes)"
 mount -t overlay overlay -o "index=off,lowerdir=$NEWROOT,upperdir=$UPPER,workdir=$OVLWORK" "$MERGED"
@@ -693,59 +888,89 @@ in_chroot() { chroot "$MERGED" /bin/bash -c "$*"; }
 
 [[ -d "$MERGED/etc/pacman.d/gnupg/private-keys-v1.d" ]] \
   || in_chroot "pacman-key --init && pacman-key --populate"
-in_chroot "curl -sfL '$HDR_URL' -o /tmp/headers.pkg.tar.zst"
+pc_download "$HDR_URL" "$MERGED/tmp/headers.pkg.tar.zst" || die "Could not download exact-match kernel headers"
 in_chroot "pacman -Sy"
-in_chroot "pacman -Qq" | LC_ALL=C sort > "$WORK/before.txt"
-in_chroot "pacman -U --noconfirm --needed /tmp/headers.pkg.tar.zst"
-in_chroot "pacman -S --noconfirm --needed dkms"
+in_chroot "pacman -Q" | LC_ALL=C sort > "$WORK/before.txt"
+BUILD_OVERWRITE=""
+if [[ -d /run/steamos-nvidia-driver ]]; then
+  in_chroot "pacman -Uw --noconfirm /tmp/headers.pkg.tar.zst"
+  in_chroot "pacman -Sw --noconfirm --needed dkms"
+  BUILD_OVERWRITE="$(pc_build_overwrites "$MERGED" "$MERGED/tmp/headers.pkg.tar.zst" "$MERGED"/var/cache/pacman/pkg/*.pkg.tar.zst)" || die "Cannot check orphan build files"
+fi
+BUILD_ARGS=""
+[[ -z "$BUILD_OVERWRITE" ]] || BUILD_ARGS="--overwrite '$BUILD_OVERWRITE'"
+in_chroot "pacman -U --noconfirm --needed $BUILD_ARGS /tmp/headers.pkg.tar.zst"
+in_chroot "pacman -S --noconfirm --needed $BUILD_ARGS dkms"
 
 # Same missing dependency the build side installs: without lib32-libxkbcommon
 # the gamescope session's 32-bit MangoHud preload fails in every game with a
-# 32-bit component. Non-fatal here — an overlay dependency must never brick an
+# 32-bit component. Non-fatal here - an overlay dependency must never brick an
 # OS update. Lands in the payload via the before/after diff below.
 in_chroot "pacman -S --noconfirm --needed lib32-libxkbcommon" \
-  || log "WARNING: lib32-libxkbcommon install failed — 32-bit MangoHud overlay will not load"
+  || log "WARNING: lib32-libxkbcommon install failed - 32-bit MangoHud overlay will not load"
 
 # Driver = the exact pinned Arch packages this image was built with (NOT the
-# slot's frozen repo — that only has Valve's older driver).
-source /usr/lib/steamos-nvidia/driver.conf
+# slot's frozen repo - that only has Valve's older driver).
+source "$DRIVER_CONFIG"
 [[ -n "${PKG_URLS:-}" ]] || die "driver.conf has no PKG_URLS"
 log "Installing pinned driver $DRIVER_VERSION"
 in_chroot "mkdir -p /tmp/nvpkgs"
 for u in $PKG_URLS; do
-  in_chroot "curl -sfL '$u' -o /tmp/nvpkgs/\$(basename '$u')" || die "download failed: $u"
+  pc_download_package "$u" "$MERGED/tmp/nvpkgs/${u##*/}" || die "Could not download pinned package: ${u##*/}; update remains disabled"
 done
-if ! in_chroot "pacman -U --noconfirm --needed /tmp/nvpkgs/*.pkg.tar.zst"; then
-  # unattended context: a keyring mismatch (frozen image keyring vs current
-  # Arch packager keys) must not brick updates — packages came over HTTPS
-  # from Arch infrastructure, so retry unsigned rather than fail the update
-  log "WARNING: pacman -U failed (keyring?) — retrying with signature checks off"
-  sed 's/^SigLevel.*/SigLevel = Never/' "$MERGED/etc/pacman.conf" > "$MERGED/tmp/pacman-nosig.conf"
-  in_chroot "pacman --config /tmp/pacman-nosig.conf -U --noconfirm --needed /tmp/nvpkgs/*.pkg.tar.zst" \
-    || die "driver package install failed"
+in_chroot "pacman -U --noconfirm --needed /tmp/nvpkgs/*.pkg.tar.zst" \
+  || die "Driver package installation failed. Check the package signatures, keyring and dependencies in the log."
+# A cloned slot already contains a module. DKMS may skip a downgrade unless
+# forced; install into the disposable overlay and verify all module versions.
+in_chroot "dkms install --force -m nvidia -v ${DRIVER_VERSION%-*} -k $KVER"
+for module in nvidia nvidia_modeset nvidia_drm nvidia_uvm; do
+  pc_check_module "$MERGED" "$KVER" "$module" "${DRIVER_VERSION%-*}" \
+    || die "Wrong or missing $module module for $KVER"
+done
+if [[ $ADD_XPADNEO -eq 1 ]]; then
+  ARCHIVE=/usr/lib/steamos-nvidia/xpadneo-source.tar.gz
+  [[ -n "$XPADNEO_SHA256" && "$(sha256sum "$ARCHIVE" | cut -d ' ' -f1)" == "$XPADNEO_SHA256" ]] \
+    || die "The saved xpadneo source archive is missing or has changed"
+  pc_install_xpadneo "$NEWROOT" "$MERGED" "$ARCHIVE" "$XPADNEO_VERSION" "$KVER"
 fi
-compgen -G "$MERGED/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null \
-  || in_chroot "dkms autoinstall -k $KVER"
-compgen -G "$MERGED/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null \
-  || die "driver failed to build for $KVER"
-in_chroot "pacman -Qq" | LC_ALL=C sort > "$WORK/after.txt"
+in_chroot "pacman -Q" | LC_ALL=C sort > "$WORK/after.txt"
 
 BUILD_ONLY_RE='^(dkms|nvidia-open-dkms|patch|gcc|gcc-libs|make|binutils|libisl|libmpc|mpfr|pahole|python-setuptools|linux-neptune.*-headers|.*-headers)$'
-mapfile -t NEW_PKGS < <(LC_ALL=C comm -13 "$WORK/before.txt" "$WORK/after.txt" | grep -Ev "$BUILD_ONLY_RE")
+mapfile -t NEW_PKGS < <(pc_changed_packages "$WORK/before.txt" "$WORK/after.txt" | grep -Ev "$BUILD_ONLY_RE")
+mapfile -t NEW_PKGS < <({
+  printf '%s\n' "${NEW_PKGS[@]}"
+  for u in $PKG_URLS; do
+    f="${u##*/}"
+    f="${f%-x86_64.pkg.tar.zst}"
+    printf '%s\n' "${f%-*-*}"
+  done
+} | grep -v '^nvidia-open-dkms$' | sed '/^$/d' | LC_ALL=C sort -u)
 [[ ${#NEW_PKGS[@]} -gt 0 ]] || die "payload list empty"
 log "Payload: ${NEW_PKGS[*]}"
 
 : > "$WORK/files.txt"
 for pkg in "${NEW_PKGS[@]}"; do in_chroot "pacman -Qlq $pkg" >> "$WORK/files.txt"; done
+if [[ $TRIM_CUDA -eq 1 ]]; then
+  grep -Ev 'libcuda|libcudadebugger|libnvidia-nvvm|libnvidia-opencl|libnvoptix|nvidia-cuda-mps|OpenCL' \
+    "$WORK/files.txt" > "$WORK/files.trim"
+  mv "$WORK/files.trim" "$WORK/files.txt"
+fi
 sed 's|^/||' "$WORK/files.txt" > "$WORK/files.rel"
-
+pc_require_space /home 1024 || die "Build consumed the remaining space on /home"
+PAYLOAD_KB="$(du -sk "$UPPER/usr/lib/modules/$KVER/updates" | cut -f1)"
+while IFS= read -r f; do
+  [[ -f "$MERGED/$f" || -L "$MERGED/$f" ]] || continue
+  size="$(du -sk "$MERGED/$f" | cut -f1)"
+  PAYLOAD_KB=$((PAYLOAD_KB + size))
+done < "$WORK/files.rel"
+log "Uncompressed driver payload: $((PAYLOAD_KB / 1024)) MiB; checking actual space after Btrfs compression"
+pc_remove_obsolete_driver_files "$NEWROOT" "$WORK/files.rel" || die "Could not remove obsolete driver files"
 log "Copying driver into $PARTSET rootfs"
-rsync -a --files-from="$WORK/files.rel" "$MERGED/" "$NEWROOT/"
-rsync -a "$UPPER/usr/lib/modules/$KVER/updates" "$NEWROOT/usr/lib/modules/$KVER/"
+pc_copy_update_payload "$MERGED" "$NEWROOT" "$WORK/files.rel" \
+  "$UPPER/usr/lib/modules/$KVER/updates" "$KVER" \
+  || die "Driver copy or free-space check failed; the new rootfs is not ready"
 for pkg in "${NEW_PKGS[@]}"; do
-  for ENTRY in "$UPPER/usr/lib/holo/pacmandb/local/$pkg"-[0-9]*; do
-    [[ -d "$ENTRY" ]] && rsync -a "$ENTRY" "$NEWROOT/usr/lib/holo/pacmandb/local/" && break
-  done
+  pc_copy_package_db "$MERGED" "$NEWROOT" "$pkg"
 done
 chroot "$NEWROOT" depmod "$KVER"
 chroot "$NEWROOT" ldconfig
@@ -767,19 +992,27 @@ grep -q 'rd.driver.blacklist=nouveau' "$NEWROOT/etc/default/grub" \
 # NEXT update is covered too
 mkdir -p "$NEWROOT/usr/lib/steamos-nvidia"
 cp -a /usr/lib/steamos-nvidia/. "$NEWROOT/usr/lib/steamos-nvidia/"
-if [[ ! -f "$NEWROOT/usr/bin/steamos-update.orig" ]]; then
-  mv "$NEWROOT/usr/bin/steamos-update" "$NEWROOT/usr/bin/steamos-update.orig"
-  cp -a /usr/bin/steamos-update "$NEWROOT/usr/bin/steamos-update"
-fi
+install -m 644 "$DRIVER_CONFIG" "$NEWROOT/usr/lib/steamos-nvidia/driver.conf"
+ln -sfn /usr/lib/steamos-nvidia/driver-change.py "$NEWROOT/usr/bin/steamos-nvidia-driver"
+pc_install_driver_manager "$NEWROOT" || die "Could not preserve the driver manager"
+pc_install_installer_update "$NEWROOT" || die "Could not preserve the installer updater"
+rm -f "$NEWROOT/usr/lib/steamos-nvidia/complete"
+install -m 755 /usr/bin/steamos-nvidia-diagnostics "$NEWROOT/usr/bin/steamos-nvidia-diagnostics"
+pc_install_update_policy "$NEWROOT" || die "Could not preserve the shared update hook"
+pc_install_display_policy "$NEWROOT" || die "Could not restore the SDR default"
+pc_install_mangoapp "$NEWROOT" || die "Could not restore MangoApp"
+pc_install_gamescope "$NEWROOT" || die "Could not restore Gamescope capture correction"
+pc_install_remote_play "$NEWROOT" || die "Could not restore Remote Play receiver"
+pc_install_nvenc "$NEWROOT" || die "Could not restore NVENC bridge"
+pc_install_bluetooth_resume "$NEWROOT" || die "Could not install Bluetooth audio resume support"
+pc_preserve_update_command "$NEWROOT" || die "Could not preserve the native update command"
+cp -a /usr/bin/steamos-update "$NEWROOT/usr/bin/steamos-update"
 [[ -f "$NEWROOT/usr/lib/systemd/system/steamos-finish-oobe-migration.service" ]] \
   && ln -sf /dev/null "$NEWROOT/etc/systemd/system/steamos-finish-oobe-migration.service"
-[[ -f /etc/sudoers.d/zz-deck-nopasswd ]] \
-  && install -m 440 /etc/sudoers.d/zz-deck-nopasswd "$NEWROOT/etc/sudoers.d/zz-deck-nopasswd"
+pc_install_installer_permissions "$NEWROOT" || die "Could not restore installer permissions"
 
 # regenerate the new slot's grub.cfg with the nvidia cmdline
 log "Regenerating grub config for $PARTSET"
-mkdir -p "$NEWROOT/efi"
-mount "$EFIDEV" "$NEWROOT/efi"
 mount -t proc proc "$NEWROOT/proc"
 mount --rbind /sys "$NEWROOT/sys"; mount --make-rslave "$NEWROOT/sys"
 mount --rbind /dev "$NEWROOT/dev"; mount --make-rslave "$NEWROOT/dev"
@@ -787,24 +1020,37 @@ chroot "$NEWROOT" update-grub
 grep -q 'rd.driver.blacklist=nouveau' "$NEWROOT/efi/EFI/steamos/grub.cfg" \
   || die "regenerated grub.cfg is missing the nvidia cmdline"
 
+pc_check_driver "$NEWROOT" "$KVER" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" || die "Driver validation failed"
+pc_check_addons "$NEWROOT" || die "Addon validation failed"
+pc_write_userspace_report "$NEWROOT" || die "NVIDIA userspace dependencies are incompatible; the update slot remains disabled"
+pc_write_runtime_info "$NEWROOT" "$KVER" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" "$TRIM_CUDA"
+# Include package metadata and generated files in the final space check.
+sync -f "$NEWROOT"
+pc_recover_update_space "$NEWROOT" || die "Less than 256 MiB remains in the completed rootfs"
+pc_write_complete "$NEWROOT" "$KVER" "$FINGERPRINT"
+pc_slot_complete "$NEWROOT" "$KVER" "$FINGERPRINT" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" || die "Slot validation failed"
 log "Syncing"
 btrfs filesystem sync "$NEWROOT"
-sync -f "$NEWROOT"
-[[ $WAS_RO -eq 1 ]] && btrfs property set "$NEWROOT" ro true
-log "OK — $PARTSET is NVIDIA-ready ($KVER)"
+sync -f "$NEWROOT"; sync -f "$NEWROOT/efi"
+[[ $WAS_RO -eq 0 ]] || btrfs property set "$NEWROOT" ro true
+/usr/bin/python3 -I /usr/lib/steamos-nvidia/driver-change.py mark-ready
+SUCCESS=1
+log "OK - $PARTSET is NVIDIA-ready ($KVER)"
 REPATCH
   chmod 755 "$MNT/usr/lib/steamos-nvidia/repatch.sh"
 
-  # ---- wrapper around steamos-update: real update, then repatch the new slot
+  # ---- legacy CLI wrapper; RAUC handles repair for both update entry points
   if [[ ! -f "$MNT/usr/bin/steamos-update.orig" ]]; then
     mv "$MNT/usr/bin/steamos-update" "$MNT/usr/bin/steamos-update.orig"
   fi
   cat > "$MNT/usr/bin/steamos-update" <<'WRAP'
 #!/bin/bash
 # steamos-update wrapper (steamos-nvidia self-healing updates).
-# Runs Valve's real updater, then rebuilds the NVIDIA driver inside the
-# freshly staged OS slot. If that fails, the update is cancelled: the
+# Runs Valve's updater with shared RAUC repair, or the legacy repair fallback.
+# If repair fails, the new slot remains disabled and the
 # bootloader keeps booting the current (working) image.
+exec 8>/run/steamos-nvidia-update.lock
+flock -n 8 || { echo "Another SteamOS update is running." >&2; exit 1; }
 REAL=/usr/bin/steamos-update.orig
 REPATCH=/usr/lib/steamos-nvidia/repatch.sh
 LOG=/var/log/steamos-nvidia-repatch.log
@@ -821,28 +1067,51 @@ rc=$?
 # The conf files on the ESP are plain text; editing them directly is the
 # only revert that reliably steers steamcl (set-mode booted does NOT undo a
 # staged switch, and a zeroed boot-requested-at still gets retried while
-# boot-attempts is nonzero — both verified the hard way).
+# boot-attempts is nonzero - both verified the hard way).
 edit_other_confs() {  # args: sed expressions
-  local this conf
-  this="$(steamos-bootconf this-image 2>/dev/null)" || return 0
-  [[ -n "$this" ]] || return 0
+  local this conf key
+  local -a targets=()
+  this="$(steamos-bootconf this-image 2>/dev/null)" || return 1
+  [[ -n "$this" && "$this" != */* && -f "/esp/SteamOS/conf/$this.conf" ]] || return 1
   for conf in /esp/SteamOS/conf/*.conf; do
     [[ -f "$conf" ]] || continue
     [[ "$(basename "$conf" .conf)" == "$this" ]] && continue
-    sed -i "$@" "$conf"
+    for key in image-invalid boot-requested-at boot-attempts; do
+      [[ "$(grep -c "^$key:" "$conf")" == 1 ]] || return 1
+    done
+    targets+=("$conf")
+  done
+  [[ ${#targets[@]} -gt 0 ]] || return 1
+  # Validate every target before changing any boot entry.
+  for conf in "${targets[@]}"; do
+    sed -i "$@" "$conf" || return 1
   done
   sync -f /esp/SteamOS/conf 2>/dev/null || sync
 }
 
+# RAUC has already repaired and validated the target before activation.
+# Keep the old path only for installations without the shared hook.
+if grep -Fxq '# steamos-nvidia shared-update-hook v1' /usr/lib/rauc/post-install.sh; then
+  exit "$rc"
+fi
+
 if [[ $rc -eq 0 && $is_apply -eq 1 ]]; then
   echo "Update staged. Building NVIDIA driver for the new OS (10-20 min, do NOT power off)..." >&2
+  # Keep the staged slot ineligible while its driver files are being changed.
+  edit_other_confs -e 's/^image-invalid:.*/image-invalid: 1/' || {
+    echo "Could not protect the staged boot entry. Driver repair was not started." >&2
+    exit 1
+  }
   if "$REPATCH" other >> "$LOG" 2>&1; then
-    echo "NVIDIA driver installed into the updated OS. Safe to reboot." >&2
     # make sure the freshly patched slot is bootable (clears an
     # image-invalid left by a previously cancelled update)
-    edit_other_confs -e 's/^image-invalid:.*/image-invalid: 0/'
+    edit_other_confs -e 's/^image-invalid:.*/image-invalid: 0/' || {
+      echo "Driver repair finished, but the new boot entry could not be enabled." >&2
+      exit 1
+    }
+    echo "NVIDIA driver installed and the new boot entry is enabled." >&2
   else
-    echo "!! NVIDIA driver rebuild FAILED — cancelling this update." >&2
+    echo "!! NVIDIA driver rebuild FAILED - cancelling this update." >&2
     echo "!! The system will keep booting the current working version." >&2
     echo "!! Details: $LOG" >&2
     edit_other_confs \
@@ -867,7 +1136,7 @@ log "Appending to kernel cmdline: $CMDLINE_ADD"
 sed -i -E "s#(steamenv_boot[[:space:]]+linux[[:space:]]+/boot/vmlinuz[^\n]*)#\1 $CMDLINE_ADD#" \
   "$EFIMNT/EFI/steamos/grub.cfg"
 grep -q 'rd.driver.blacklist=nouveau' "$EFIMNT/EFI/steamos/grub.cfg" \
-  || die "grub.cfg edit failed — cmdline pattern not found"
+  || die "grub.cfg edit failed - cmdline pattern not found"
 if [[ -f "$MNT/etc/default/grub" ]]; then
   sed -i -E "s#^(GRUB_CMDLINE_LINUX_DEFAULT=\")#\1$CMDLINE_ADD #" "$MNT/etc/default/grub"
 fi
@@ -877,7 +1146,7 @@ if [[ $ADD_INSTALLER -eq 1 ]]; then
   TOOLS="$HOMEMNT/deck/tools"
   DESKTOP="$HOMEMNT/deck/Desktop"
   [[ -f "$TOOLS/repair_device.sh" ]] \
-    || die "No repair_device.sh in image home — is this the OOBE *repair* image?"
+    || die "No repair_device.sh in image home - is this the OOBE *repair* image?"
 
   log "Patching Valve's repair_device.sh for generic hardware"
   cp -a "$TOOLS/repair_device.sh" "$TOOLS/repair_device.sh.stock"
@@ -888,7 +1157,7 @@ if [[ $ADD_INSTALLER -eq 1 ]]; then
     "$TOOLS/repair_device.sh"
   grep -q 'STEAMOS_TARGET_DISK' "$TOOLS/repair_device.sh" || die "DISK patch failed"
   # skip NVMe sanitize for non-NVMe targets (it error-traps on SATA/virtio),
-  # and tolerate NVMe drives that don't implement sanitize — some (e.g. WD
+  # and tolerate NVMe drives that don't implement sanitize - some (e.g. WD
   # Gen3) return "Access Denied ... (0x4286)" and would abort the whole
   # install (issue #8). A failed sanitize just means the old data isn't
   # pre-erased; the install proceeds fine without it.
@@ -898,79 +1167,22 @@ if [[ $ADD_INSTALLER -eq 1 ]]; then
   grep -q 'skipping NVMe sanitize' "$TOOLS/repair_device.sh" || die "sanitize patch failed"
   grep -q 'sanitize failed or unsupported' "$TOOLS/repair_device.sh" || die "sanitize-tolerance patch failed"
 
+  /usr/bin/python3 "$SCRIPT_DIR/scripts/patch-repair.py" "$TOOLS/repair_device.sh" \
+    || die "Unsupported Valve installer layout or bootloader command"
+
   log "Installing disk-picker wrapper + desktop icons"
   cat > "$TOOLS/install_to_hd.sh" <<'WRAPPER'
 #!/bin/bash
-# One-click SteamOS (NVIDIA-patched) installer/upgrader. Picks an internal
-# disk, then runs Valve's repair_device.sh which clones the running USB
-# system onto it.
-#   $1 = all    → full install: wipes the disk (default)
-#   $1 = system → upgrade: reimages the OS partitions, KEEPS games & data
-set -eu
-
-MODE="${1:-all}"
-case "$MODE" in
-  all)
-    TITLE="Install SteamOS (NVIDIA) to Hard Drive"
-    PICK_TEXT="Select the disk to install SteamOS onto.\n\nEVERYTHING ON THE SELECTED DISK WILL BE ERASED."
-    CONFIRM_LABEL="ERASE AND INSTALL"
-    CONFIRM_TEXT_TPL="About to install SteamOS (NVIDIA-patched) onto:\n\n    %s\n\nThis PERMANENTLY DESTROYS everything on that disk.\nThe install takes several minutes. The machine powers off when done:\nremove the USB stick, then boot from %s."
-    ;;
-  system)
-    TITLE="Upgrade SteamOS (NVIDIA) — keeps games & data"
-    PICK_TEXT="Select the disk with the existing SteamOS installation to upgrade.\n\nThe OS partitions are reinstalled from this USB; the home partition\n(games, saves, Steam login) is NOT touched."
-    CONFIRM_LABEL="UPGRADE"
-    CONFIRM_TEXT_TPL="About to upgrade the SteamOS installation on:\n\n    %s\n\nGames and user data on that disk are preserved.\nOS customisations outside /home will be lost.\nThe machine powers off when done: remove the USB stick and boot."
-    ;;
-  *) echo "Usage: $0 [all|system]" >&2; exit 1 ;;
-esac
-
-err_exit() { zenity --error --no-wrap --text "$1" 2>/dev/null || echo "ERROR: $1" >&2; exit 1; }
-
-# Disk we're running from (the USB) — never offer it as a target
-SRC_PART="$(findmnt -no SOURCE /)"
-SRC_DISK="$(lsblk -no PKNAME "$SRC_PART" 2>/dev/null | head -1)"
-
-mapfile -t CANDIDATES < <(lsblk -dn -o NAME,SIZE,MODEL,TRAN,TYPE | \
-  awk -v src="$SRC_DISK" '$NF=="disk" && $1!=src && $1 !~ /^(loop|zram|sr|nbd|ram)/ {NF--; print}')
-
-[[ ${#CANDIDATES[@]} -gt 0 ]] || err_exit "No target disk found.\nThis machine appears to have no internal drive (other than this USB)."
-
-ROWS=()
-for c in "${CANDIDATES[@]}"; do
-  name="${c%% *}"; rest="${c#* }"
-  ROWS+=(FALSE "/dev/$name" "$rest")
-done
-
-TARGET=$(zenity --list --radiolist --title "$TITLE" \
-  --text "$PICK_TEXT" \
-  --column "" --column "Disk" --column "Size / Model / Bus" \
-  --width 640 --height 340 "${ROWS[@]}") || exit 0
-[[ -n "$TARGET" && -b "$TARGET" ]] || err_exit "No disk selected."
-
-# Upgrade mode only makes sense on a disk that already has the SteamOS layout
-if [[ "$MODE" == system ]]; then
-  if ! lsblk -no PARTLABEL "$TARGET" 2>/dev/null | grep -qx "rootfs-A"; then
-    err_exit "No existing SteamOS installation found on $TARGET.\nUse \"Install SteamOS (NVIDIA) to Hard Drive\" for a fresh install."
-  fi
-fi
-
-# shellcheck disable=SC2059  # template contains the %s placeholders
-CONFIRM_TEXT="$(printf "$CONFIRM_TEXT_TPL" "$TARGET" "$TARGET")"
-zenity --question --no-wrap --title "Final confirmation" --ok-label "$CONFIRM_LABEL" --cancel-label "Cancel" \
-  --text "$CONFIRM_TEXT" || exit 0
-
-# POWEROFF=1: end with a shutdown prompt so the user can pull the USB
-exec sudo env STEAMOS_TARGET_DISK="$TARGET" POWEROFF=1 \
-  "$(dirname "$(readlink -f "$0")")/repair_device.sh" "$MODE"
+# UI and validation are shared by internal and external USB installations.
+exec /usr/bin/python3 /usr/lib/steamos-nvidia/install-target.py "${1:-all}"
 WRAPPER
   chmod 755 "$TOOLS/install_to_hd.sh"
 
   cat > "$DESKTOP/Install SteamOS NVIDIA.desktop" <<'ICON'
 [Desktop Entry]
-Name=Install SteamOS (NVIDIA) to Hard Drive
-GenericName=Install SteamOS (NVIDIA) to Hard Drive
-Comment=Erase an internal disk and install this NVIDIA-patched SteamOS onto it
+Name=Install SteamOS (NVIDIA) to Disk
+GenericName=Install SteamOS (NVIDIA) to Disk
+Comment=Install SteamOS on an internal disk or external USB disk, erasing the selected disk
 Exec=/home/deck/tools/install_to_hd.sh all
 Icon=drive-harddisk
 Path=/home/deck
@@ -982,8 +1194,8 @@ ICON
 
   cat > "$DESKTOP/Upgrade SteamOS NVIDIA.desktop" <<'ICON'
 [Desktop Entry]
-Name=Upgrade SteamOS (NVIDIA) — keeps games & data
-GenericName=Upgrade SteamOS (NVIDIA) — keeps games & data
+Name=Upgrade SteamOS (NVIDIA) - keeps games & data
+GenericName=Upgrade SteamOS (NVIDIA) - keeps games & data
 Comment=Reinstall the OS partitions from this USB while preserving the home partition
 Exec=/home/deck/tools/install_to_hd.sh system
 Icon=system-software-update
@@ -998,14 +1210,103 @@ ICON
     "$TOOLS/repair_device.sh.stock" "$DESKTOP/Install SteamOS NVIDIA.desktop" \
     "$DESKTOP/Upgrade SteamOS NVIDIA.desktop"
 
-  log "Adding NOPASSWD sudoers drop-in for deck (needed by the install icon)"
-  echo 'deck ALL=(ALL) NOPASSWD: ALL' > "$MNT/etc/sudoers.d/zz-deck-nopasswd"
-  chmod 440 "$MNT/etc/sudoers.d/zz-deck-nopasswd"
+  log "Installing the protected repair tool and limited installer permission"
+  install -D -m 755 "$TOOLS/repair_device.sh" "$MNT/usr/lib/steamos-nvidia/installer/repair_device.sh"
+  # Never execute optional firmware tools from the writable home directory.
+  sed -i -e 's|^VENDORED_BIOS_UPDATE=.*|VENDORED_BIOS_UPDATE=/usr/lib/steamos-nvidia/installer/no-vendored-bios|' \
+    -e 's|^VENDORED_CONTROLLER_UPDATE=.*|VENDORED_CONTROLLER_UPDATE=/usr/lib/steamos-nvidia/installer/no-vendored-controller|' \
+    "$MNT/usr/lib/steamos-nvidia/installer/repair_device.sh"
+  if [[ -f "$TOOLS/steamos-branch" ]]; then
+    install -m 644 "$TOOLS/steamos-branch" "$MNT/usr/lib/steamos-nvidia/installer/steamos-branch"
+  fi
+  pc_install_installer_permissions "$MNT" || die "Could not restrict installer permissions"
 fi
+
+# Record the exact inputs without marking this candidate as hardware-tested.
+{
+  printf 'Installer version: %s\n' "$INSTALLER_VERSION"
+  printf 'Built UTC: %s\n' "$(date -u +%FT%TZ)"
+  printf 'Source commit: %s\n' "$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
+  printf 'Source working tree:\n'
+  git -C "$SCRIPT_DIR" status --short --untracked-files=no 2>/dev/null || true
+  printf 'Input image: %s\n' "$(basename "$IMG")"
+  printf 'Input SHA256: %s\n' "$(sha256sum "$IMG" | cut -d ' ' -f1)"
+  printf 'Update mode: %s\nInstaller: %s\nTrim CUDA: %s\nxpadneo enabled: %s\n' \
+    "$UPDATE_MODE" "$ADD_INSTALLER" "$TRIM_CUDA" "$ADD_XPADNEO"
+  printf 'Source file SHA256:\n'
+  (cd "$SCRIPT_DIR" && sha256sum VERSION steamos-nvidia-installer.sh lib/pc-support.sh scripts/steamos-nvidia-diagnostics scripts/hdr-defaults.py scripts/safe-graphics.py scripts/bluetooth-resume.py scripts/install-target.py scripts/patch-repair.py)
+} > "$MNT/usr/lib/steamos-nvidia/build-info.txt"
+
+if [[ $EXPERIMENTAL_BETA == 1 ]]; then
+  log "Experimental image: selecting SteamOS beta for OS updates"
+  pc_select_beta_branch "$MNT" || die "Could not select the experimental beta branch"
+fi
+
+if [[ $EXPERIMENTAL_PREVIEW == 1 ]]; then
+  log "Experimental image: selecting SteamOS Preview for OS updates"
+  pc_select_experimental_branch "$MNT" preview || die "Could not select the experimental Preview branch"
+fi
+
+if [[ $UPDATE_MODE == selfheal ]]; then
+  pc_install_update_policy "$MNT" || die "Could not install the shared update hook"
+fi
+if [[ -n "$MANGOAPP_DIR" ]]; then
+  install -m 755 "$MANGOAPP_DIR/mangoapp" "$MNT/usr/lib/steamos-nvidia/mangoapp"
+  install -m 644 "$MANGOAPP_DIR/mangoapp-build.json" "$MANGOAPP_DIR/MangoHud-LICENSE" "$MNT/usr/lib/steamos-nvidia/"
+fi
+pc_install_display_policy "$MNT" || die "Could not install the SDR default"
+pc_install_mangoapp "$MNT" || die "Could not install MangoApp"
+if [[ -n "$GAMESCOPE_DIR" ]]; then
+  mkdir -p "$MNT/usr/lib/steamos-nvidia/gamescope/bin"
+  install -m 755 "$GAMESCOPE_DIR/root/usr/bin/gamescope" "$MNT/usr/lib/steamos-nvidia/gamescope/bin/gamescope"
+  install -m 644 "$GAMESCOPE_DIR/gamescope-build.json" "$GAMESCOPE_DIR/Gamescope-LICENSE" "$MNT/usr/lib/steamos-nvidia/gamescope/"
+  if [[ -d "$GAMESCOPE_DIR/licenses" ]]; then
+    cp -a "$GAMESCOPE_DIR/licenses" "$MNT/usr/lib/steamos-nvidia/gamescope/"
+  fi
+fi
+pc_install_gamescope "$MNT" || die "Could not install Gamescope capture correction"
+if [[ -n "$REMOTE_PLAY_DIR" ]]; then
+  mkdir -p "$MNT/usr/lib/steamos-nvidia/remote-play"
+  cp -a "$REMOTE_PLAY_DIR/." "$MNT/usr/lib/steamos-nvidia/remote-play/"
+  install -m 755 "$SCRIPT_DIR/scripts/remote-play-env.py" "$MNT/usr/lib/steamos-nvidia/remote-play-env.py"
+fi
+pc_install_remote_play "$MNT" || die "Could not install Remote Play receiver"
+if [[ -n "$NVENC_DIR" ]]; then
+  mkdir -p "$MNT/usr/lib/steamos-nvidia/nvenc"
+  cp -a "$NVENC_DIR/." "$MNT/usr/lib/steamos-nvidia/nvenc/"
+fi
+pc_install_nvenc "$MNT" || die "Could not install NVENC bridge"
+
+pc_install_bluetooth_resume "$MNT" || die "Could not install Bluetooth audio resume support"
+install -m 755 "$SCRIPT_DIR/scripts/driver-stage.sh" "$MNT/usr/lib/steamos-nvidia/driver-stage.sh"
+install -m 755 "$SCRIPT_DIR/scripts/driver-change.py" "$MNT/usr/lib/steamos-nvidia/driver-change.py"
+ln -sfn /usr/lib/steamos-nvidia/driver-change.py "$MNT/usr/bin/steamos-nvidia-driver"
+install -m 755 "$SCRIPT_DIR/scripts/driver-manager.py" "$MNT/usr/lib/steamos-nvidia/driver-manager.py"
+install -m 644 "$SCRIPT_DIR/images/change-nvidia-driver.png" "$MNT/usr/lib/steamos-nvidia/change-nvidia-driver.png"
+pc_install_driver_manager "$MNT" || die "Could not install the driver manager"
+if [[ -n "$INSTALLER_UPDATE_SOURCE" ]]; then
+  [[ $UPDATE_MODE == selfheal ]] || die "Installer updates require self-healing mode"
+  install -m 755 "$SCRIPT_DIR/scripts/installer-update.py" "$MNT/usr/lib/steamos-nvidia/installer-update.py"
+  install -m 755 "$SCRIPT_DIR/scripts/installer-update-ui.py" "$MNT/usr/lib/steamos-nvidia/installer-update-ui.py"
+  install -m 644 "$SCRIPT_DIR/images/installer-update.png" "$MNT/usr/lib/steamos-nvidia/installer-update.png"
+  install -m 644 "$INSTALLER_UPDATE_SOURCE" "$MNT/usr/lib/steamos-nvidia/installer-update-source.json"
+  python3 - "$MNT/usr/lib/steamos-nvidia/integration-version.json" "$INSTALLER_VERSION" <<'INTEGRATION_VERSION'
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({'version': sys.argv[2]}, indent=2) + '\n')
+INTEGRATION_VERSION
+  chroot "$MNT" /usr/bin/python3 -I -c "import runpy; runpy.run_path('/usr/lib/steamos-nvidia/installer-update.py')['source']()" || die "Invalid installer update source"
+  chroot "$MNT" /usr/bin/openssl version >/dev/null || die "Installer updates require OpenSSL"
+  pc_install_installer_update "$MNT" || die "Could not install project updater"
+fi
+pc_write_addon_manifest "$MNT" || die "Could not record addon files"
+pc_check_addons "$MNT" || die "Addon validation failed"
 
 # ----------------------------------------------------------- sanity check
 log "Sanity checks"
-compgen -G "$MNT/usr/lib/modules/$KVER/updates/dkms/nvidia.ko*" >/dev/null || die "nvidia.ko missing from image"
+EXPECTED_XPADNEO=""
+[[ $ADD_XPADNEO -eq 0 ]] || EXPECTED_XPADNEO="$XPADNEO_VERSION"
+pc_check_driver "$MNT" "$KVER" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" || die "Driver validation failed"
+pc_write_runtime_info "$MNT" "$KVER" "$DRIVER_VERSION" "$EXPECTED_XPADNEO" "$TRIM_CUDA"
 grep -q 'blacklist nouveau' "$MNT/etc/modprobe.d/99-nvidia-patch.conf" || die "modprobe conf is empty/missing"
 if [[ $UPDATE_MODE == selfheal ]]; then
   grep -q 'self-healing' "$MNT/usr/bin/steamos-update" || die "update wrapper missing"
@@ -1014,12 +1315,12 @@ if [[ $UPDATE_MODE == selfheal ]]; then
   grep -q "^DRIVER_VERSION=\"$DRIVER_VERSION\"" "$MNT/usr/lib/steamos-nvidia/driver.conf" || die "driver.conf missing/wrong"
   [[ -L "$MNT/etc/systemd/system/atomupd.service" ]] && die "atomupd must NOT be masked in selfheal mode"
 fi
-compgen -G "$MNT/usr/lib/firmware/nvidia/*/gsp_*.bin" >/dev/null || warn "GSP firmware not found — nvidia-open needs it"
+compgen -G "$MNT/usr/lib/firmware/nvidia/*/gsp_*.bin" >/dev/null || warn "GSP firmware not found - nvidia-open needs it"
 [[ -f "$MNT/usr/share/vulkan/icd.d/nvidia_icd.json" ]] || warn "Vulkan ICD json missing"
 AVAIL_AFTER="$(df -m --output=avail "$MNT" | tail -1 | tr -d ' ')"
 log "Rootfs free space after install: ${AVAIL_AFTER} MB"
 
-# Flush all pending writes BEFORE flipping the subvolume read-only —
+# Flush all pending writes BEFORE flipping the subvolume read-only -
 # flipping with delalloc data still queued can silently produce 0-byte files.
 log "Syncing filesystems"
 btrfs filesystem sync "$MNT"
@@ -1032,19 +1333,19 @@ log "Unmounting"
 cleanup
 trap - EXIT
 
-log "DONE — $OUT"
+log "DONE - $OUT"
 cat <<EOF
 
   Driver:  nvidia-open (DKMS) $NVIDIA_VER for kernel $KVER
-           (latest Arch at build time, pinned — Valve's mirror only has 575.x)
+           (latest Arch at build time, pinned - Valve's mirror only has 575.x)
 $( case $UPDATE_MODE in
-     selfheal) echo "  Updates: SELF-HEALING — updating from within Steam works; the SAME
+     selfheal) echo "  Updates: SELF-HEALING - updating from within Steam works; the SAME
            pinned driver is rebuilt for each new OS version automatically
            (adds 10-20 min per update; failed rebuilds cancel the update,
-           system stays working). For a NEWER driver later: rerun this
-           script and reinstall from the fresh USB image." ;;
+           system stays working). To change the driver later, use
+           steamos-nvidia-driver on an installed self-healing A/B system." ;;
      hold)     echo "  Updates: OS updates HELD (atomupd + OOBE migration masked, CLIs stubbed)." ;;
-     stock)    echo "  Updates: STOCK behaviour — an OS update will REMOVE the NVIDIA driver!" ;;
+     stock)    echo "  Updates: STOCK behaviour - an OS update will REMOVE the NVIDIA driver!" ;;
    esac )
 $( [[ $ADD_INSTALLER -eq 1 ]] && echo "  Install: boot the USB → double-click \"Install SteamOS (NVIDIA) to
            Hard Drive\" → pick disk → machine powers off → remove USB, boot." )

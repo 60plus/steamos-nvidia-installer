@@ -1,0 +1,7 @@
+{
+  "name": "SteamOS NVIDIA Installer",
+  "release_api": "https://api.github.com/repos/60plus/steamos-nvidia-installer/releases/",
+  "download_origin": "https://github.com",
+  "allow_prerelease": false,
+  "public_key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAHPU95uEYmWGgHGrr29ruc04Xca/MVtfxdMvHVylxIB8=\n-----END PUBLIC KEY-----\n"
+}

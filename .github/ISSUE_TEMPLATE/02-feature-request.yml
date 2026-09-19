@@ -1,0 +1,60 @@
+name: Feature request
+description: Suggest a focused improvement to the installer or tools.
+title: '[Feature]: '
+body:
+- type: markdown
+  attributes:
+    value: Explain the task you want to accomplish and how the change would help.
+- type: checkboxes
+  id: before-submit
+  attributes:
+    label: Before you submit
+    options:
+    - label: I searched existing issues for the same problem or request.
+      required: true
+- type: dropdown
+  id: area
+  attributes:
+    label: Area
+    options:
+    - Image building
+    - Installation
+    - Updates and recovery
+    - NVIDIA driver manager
+    - Display and audio
+    - Controllers / Bluetooth / sleep
+    - Documentation
+    - Other
+  validations:
+    required: true
+- type: textarea
+  id: problem
+  attributes:
+    label: What would you like to do?
+    placeholder: Describe the task and what currently gets in the way.
+  validations:
+    required: true
+- type: textarea
+  id: proposal
+  attributes:
+    label: How should it work?
+    placeholder: Describe the expected user experience.
+  validations:
+    required: true
+- type: textarea
+  id: alternatives
+  attributes:
+    label: Current workaround or alternatives
+- type: textarea
+  id: hardware
+  attributes:
+    label: Relevant hardware or examples
+    description: Include hardware models if the request depends on a device, or add screenshots or
+      links.
+- type: checkboxes
+  id: participation
+  attributes:
+    label: Optional follow-up
+    options:
+    - label: I can test this on my hardware.
+    - label: I can help with code or documentation.

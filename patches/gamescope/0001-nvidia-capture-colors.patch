@@ -1,0 +1,100 @@
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Subject: [PATCH] rendervulkan: fall back to XBGR2101010 when XRGB2101010 is unsupported
+
+Upstream: https://github.com/ValveSoftware/gamescope/commit/ff6b924fd0634a51d0fb3755c56c01dca1daadc1
+Backport to 3.16.23.4: retain the existing screenshot-extension context and output dimensions.
+The color-format selection and channel decoding are unchanged from upstream.
+
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3684,6 +3684,25 @@ gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uin
+ 	return texture;
+ }
+ 
++// XRGB2101010 storage images are an optional Vulkan feature that NVIDIA hardware
++// doesn't support, and imageStore lands in XBGR order there, swapping R/B.
++uint32_t vulkan_get_rgb10_capture_format( void )
++{
++	static uint32_t s_uFormat = []()
++	{
++		// Pooled capture textures are mappable, hence linear-tiled.
++		VkFormatProperties props;
++		g_device.vk.GetPhysicalDeviceFormatProperties( g_device.physDev(), VK_FORMAT_A2R10G10B10_UNORM_PACK32, &props );
++		constexpr VkFormatFeatureFlags uNeeded = VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
++		if ( ( props.linearTilingFeatures & uNeeded ) == uNeeded )
++			return DRM_FORMAT_XRGB2101010;
++
++		vk_log.infof( "XRGB2101010 lacks linear storage/sampled support, capturing as XBGR2101010" );
++		return DRM_FORMAT_XBGR2101010;
++	}();
++	return s_uFormat;
++}
++
+ // Internal display's native brightness.
+ float g_flInternalDisplayBrightnessNits = 500.0f;
+ 
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -414,6 +414,7 @@ void vulkan_wait( uint64_t ulSeqNo, bool bReset );
+ gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
+ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+ gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
++uint32_t vulkan_get_rgb10_capture_format( void );
+ 
+ void vulkan_present_to_window( void );
+ 
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -2422,7 +2422,7 @@ static void paint_pipewire()
+ 	}
+ 
+ 	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
+-		? vulkan_acquire_capture_texture( uWidth, uHeight, false, DRM_FORMAT_XRGB2101010 )
++		? vulkan_acquire_capture_texture( uWidth, uHeight, false, vulkan_get_rgb10_capture_format() )
+ 		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
+ 
+ 	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
+@@ -2862,7 +2862,7 @@ paint_all( global_focus_t *pFocus, bool async )
+ 		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;
+ 
+ 		if ( path.extension() == ".avif" )
+-			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
++			drmCaptureFormat = vulkan_get_rgb10_capture_format();
+ 		else if ( path.extension() == ".png" )
+ 			drmCaptureFormat = DRM_FORMAT_XRGB8888;
+ 		else if ( path.extension() == ".nv12.bin" )
+@@ -3028,22 +3028,27 @@ paint_all( global_focus_t *pFocus, bool async )
+ 
+ 				bool bScreenshotSuccess = false;
+ 
+-				if ( pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 )
++				if ( pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ||
++				     pScreenshotTexture->format() == VK_FORMAT_A2B10G10R10_UNORM_PACK32 )
+ 				{
+ 					// Make our own copy of the image to remove the alpha channel.
+ 					constexpr uint32_t kCompCnt = 3;
+ 					auto imageData = std::vector<uint16_t>( g_nOutputWidth * g_nOutputHeight * kCompCnt );
+ 
++					// R sits at bits 20-29 for XRGB, 0-9 for XBGR. B mirrors it.
++					const uint32_t uRedShift = pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ? 20 : 0;
++					const uint32_t uBlueShift = 20 - uRedShift;
++
+ 					for (uint32_t y = 0; y < g_nOutputHeight; y++)
+ 					{
+ 						for (uint32_t x = 0; x < g_nOutputWidth; x++)
+ 						{
+ 							uint32_t *pInPixel = (uint32_t *)&mappedData[(y * pScreenshotTexture->rowPitch()) + x * (32 / 8)];
+ 							uint32_t uInPixel = *pInPixel;
+ 
+-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
+-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
+-							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
++							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 0] = (uInPixel >> uRedShift)  & 0b1111111111;
++							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 1] = (uInPixel >> 10) & 0b1111111111;
++							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 2] = (uInPixel >> uBlueShift) & 0b1111111111;
+ 						}
+ 					}
+ 

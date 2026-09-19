@@ -1,0 +1,153 @@
+name: Bug report
+description: Report an installation, update, display or device problem.
+title: '[Bug]: '
+body:
+- type: markdown
+  attributes:
+    value: Describe one problem per report. A failed boot is enough to report a bug; you do not need
+      to reinstall or repeat a risky operation.
+- type: checkboxes
+  id: before-submit
+  attributes:
+    label: Before you submit
+    options:
+    - label: I searched existing issues for the same problem or request.
+      required: true
+- type: dropdown
+  id: area
+  attributes:
+    label: Where does the problem occur?
+    options:
+    - Building the USB image
+    - Booting the installer USB
+    - Installing to disk
+    - First setup or OS update
+    - Updating installer tools
+    - Performance overlay / GPU readings
+    - Changing or rolling back the NVIDIA driver
+    - Display / HDR / VRR
+    - Audio / Bluetooth / controller
+    - Sleep / wake / network reconnect
+    - Game or Proton
+    - Other / not sure
+  validations:
+    required: true
+- type: textarea
+  id: symptom
+  attributes:
+    label: What happened, and what did you expect?
+    placeholder: Describe the result and include the exact error, if any.
+  validations:
+    required: true
+- type: textarea
+  id: steps
+  attributes:
+    label: Steps leading to the problem
+    placeholder: '1. Start from...
+
+      2. Select...
+
+      3. The system...'
+  validations:
+    required: true
+- type: dropdown
+  id: frequency
+  attributes:
+    label: How often does it happen?
+    options:
+    - Every time
+    - Sometimes
+    - Only once so far
+    - Not safe or practical to repeat
+  validations:
+    required: true
+- type: input
+  id: installer-release
+  attributes:
+    label: Installer release
+    description: Use the release number from your download, for example 0.1.0. For your own build, give the source commit. Write unknown if needed.
+  validations:
+    required: true
+- type: input
+  id: image-filename
+  attributes:
+    label: Image filename
+    description: The filename you downloaded or built.
+- type: input
+  id: steamos-version
+  attributes:
+    label: SteamOS version
+    description: The installed OS version, for example 3.8.16. Write unknown if it cannot boot.
+  validations:
+    required: true
+- type: input
+  id: nvidia-version
+  attributes:
+    label: NVIDIA driver version
+    description: Read it from the diagnostic report or nvidia-smi. Write unknown if unavailable.
+  validations:
+    required: true
+- type: textarea
+  id: hardware
+  attributes:
+    label: Hardware
+    description: Use exact model names where available.
+    placeholder: 'CPU:
+
+      GPU:
+
+      Motherboard / PC model:
+
+      Monitor / TV:
+
+      Installation disk:'
+  validations:
+    required: true
+- type: dropdown
+  id: installation
+  attributes:
+    label: Where is SteamOS running?
+    options:
+    - Installer USB
+    - Internal SSD / NVMe / HDD
+    - External USB SSD / disk
+    - Not installed yet
+    - Other / not sure
+  validations:
+    required: true
+- type: dropdown
+  id: session
+  attributes:
+    label: Affected session
+    options:
+    - Game Mode
+    - Desktop Mode
+    - Both Game Mode and Desktop Mode
+    - Text console / build terminal
+    - Before any desktop appears
+    - Not sure
+- type: textarea
+  id: connection
+  attributes:
+    label: Display and connected devices
+    description: For display issues include HDMI or DP, adapters, resolution, refresh rate, HDR and
+      VRR. For device issues include model and USB or Bluetooth connection.
+- type: input
+  id: build-host
+  attributes:
+    label: Build machine, if this is a build failure
+    description: Linux distribution and version; say whether it runs in a VM or container.
+- type: textarea
+  id: comparison
+  attributes:
+    label: What have you already tried?
+    description: Mention a previously working version, another cable or session, or whether a normal
+      restart helped. Leave blank if nothing was changed.
+- type: textarea
+  id: diagnostics
+  attributes:
+    label: Diagnostics and screenshots
+    description: Run `steamos-nvidia-diagnostics > ~/steamos-nvidia-report.txt` and attach the file
+      here. For update failures also attach /var/log/steamos-nvidia-repatch.log and the current boot
+      journal. If unavailable, say what you can access. Remove passwords, keys and unrelated personal
+      data before uploading.

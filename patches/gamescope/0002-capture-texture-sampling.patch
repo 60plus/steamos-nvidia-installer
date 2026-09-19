@@ -1,0 +1,18 @@
+From: Matthew Schwartz <matthew.schwartz@linux.dev>
+Subject: [PATCH] rendervulkan: allow sampling pooled capture textures
+
+Upstream: https://github.com/ValveSoftware/gamescope/pull/2164
+Adapted to 3.16.23.4's shared screenshot/capture texture pool. The RGB-to-NV12
+shader samples these images, so their Vulkan usage must include SAMPLED_BIT.
+
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3625,6 +3625,7 @@ static gamescope::Rc<CVulkanTexture> acquire_pooled_texture( auto& pool, uint32
+ 			textureFlags.bMappable = true;
+ 			textureFlags.bTransferDst = true;
+ 			textureFlags.bStorage = true;
++			textureFlags.bSampled = true;
+ 			if (exportable || drmFormat == DRM_FORMAT_NV12) {
+ 				textureFlags.bExportable = true;
+ 				textureFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire

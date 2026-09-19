@@ -1,266 +1,74 @@
-# steamos-nvidia-installer
+# SteamOS NVIDIA Installer
 
-**Install real SteamOS on any PC with an NVIDIA RTX graphics card.**
+![SteamOS NVIDIA Installer](images/Sos1.png)
 
-[![steamos-nvidia-installer demo](https://img.youtube.com/vi/S3PcLhEXTK4/maxresdefault.jpg)](https://youtu.be/S3PcLhEXTK4)
+**Your RTX PC. Your Steam library. SteamOS.**
 
-Valve's SteamOS recovery image only ships drivers for AMD hardware. This
-script takes the official recovery image and produces a bootable USB
-installer with the NVIDIA driver baked in — including self-healing OS
-updates, so updating from inside Steam keeps working afterwards.
+Turn Valve's official recovery image into a bootable SteamOS installer for a PC
+with NVIDIA graphics. Start from USB, install on an internal or external USB disk, and use Game Mode
+with a controller or switch to Desktop Mode when you need a full Linux desktop.
 
-Everything is built from the official image on your own machine. Nothing
-from Valve is redistributed here.
+[Get started](https://github.com/60plus/steamos-nvidia-installer/wiki) · [Build your USB image](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-the-USB-image) · [Troubleshooting](https://github.com/60plus/steamos-nvidia-installer/wiki/Troubleshooting)
 
-> Independent hobby project — **not affiliated with or endorsed by Valve or
-> NVIDIA.** See [LICENSE](LICENSE).
+## Built for a living-room PC
 
----
+- **NVIDIA ready:** builds the open kernel driver for the exact kernel in your recovery image.
+- **Change drivers from the desktop:** choose a compatible NVIDIA release and prepare it without rebuilding your USB installer.
+- **Updates from Steam:** rebuilds the selected NVIDIA driver for the updated OS before completing repair.
+- **A comfortable first start:** new display profiles start with HDR off. Turn it on later for a compatible display; your choice is preserved.
+- **Controller friendly:** uses SteamOS controller support by default, with optional xpadneo for controllers that need it.
+- **Install or refresh:** desktop shortcuts offer a fresh installation or an OS reinstall that keeps the existing SteamOS data partition.
+- **Help when you need it:** optional Safe Graphics and local diagnostic reports make troubleshooting easier.
+- **Remote Play in both directions:** build with capture and receiver color fixes, plus an NVIDIA hardware-encoding bridge.
+- **Useful performance readings:** the corrected overlay shows GPU metrics and detected CPU/GPU names.
+- **Installer tools stay current:** configured images include a desktop updater for signed project fixes.
+- **Built on your machine:** the original recovery image is kept intact. Choose a driver version and produce your own USB image.
 
 ## What you need
 
-**A Linux machine to build the USB image on** (Arch-based recommended):
+An NVIDIA RTX desktop PC, UEFI with Secure Boot disabled, a USB drive of at least
+16 GB, and a Linux machine to build the image. Intel and AMD desktop CPUs are
+both in scope. Hybrid graphics laptops need separate validation.
 
-- ~20 GB free disk space
-- `losetup`, `btrfs-progs`, `rsync`, `curl`, `kmod`, `zstd`, `pacman`,
-  `python3`, `binutils` (for `readelf`)
-- root (`sudo`)
+**GeForce GTX 10xx and older cards are not supported by this installer.** It uses
+NVIDIA's open kernel modules, which require Turing or newer. GTX 16xx and RTX
+cards fall within that architecture range; the selected driver must also support
+the exact GPU. See [NVIDIA's GPU support documentation](https://github.com/NVIDIA/open-gpu-kernel-modules#compatible-gpus).
 
-**The target machine** (where SteamOS will be installed):
+Fresh installation erases the selected disk. Read the
+[preparation guide](https://github.com/60plus/steamos-nvidia-installer/wiki/Before-you-start) before writing the USB or installing.
 
-- NVIDIA **GTX 16 / RTX 20-series or newer** — the open kernel driver only supports
-  Turing and later, so GTX 10 series and older will **not** work
-- UEFI boot, **Secure Boot disabled**
-- A USB stick or external drive of **16 GB or more** to flash the installer to
+**Display tip:** if HDMI gives you a green screen, flickering or trouble with HDR
+and VRR, try a direct DisplayPort connection when available. See the [display troubleshooting guide](https://github.com/60plus/steamos-nvidia-installer/wiki/Troubleshooting#hdr-and-hdmi).
 
----
+## From recovery image to Game Mode
 
-## Step 0 — Get this script
+The project distributes source code, tools and integration updates, not Valve's
+recovery image or a complete SteamOS disk image. Download the recovery image
+directly from Valve and build your installer locally.
 
-Clone the repo:
+1. Download and unpack the official SteamOS recovery image.
+2. Build the NVIDIA image with this repository.
+3. Write it to USB, boot your PC and choose the desktop installer.
 
-```bash
-git clone https://github.com/28allday/steamos-nvidia-installer.git
-cd steamos-nvidia-installer
-```
+Custom builds include the overlay, Remote Play components and desktop updater through
+the build options documented in the manual. The basic build command does not add
+those components automatically.
 
-Or download just the one script:
+The [manual](https://github.com/60plus/steamos-nvidia-installer/wiki) covers each step, driver options, updates,
+display settings and controller setup.
 
-```bash
-curl -O https://raw.githubusercontent.com/28allday/steamos-nvidia-installer/main/steamos-nvidia-installer.sh
-chmod +x steamos-nvidia-installer.sh
-```
+## Help improve PC support
 
-## Step 1 — Download the official SteamOS recovery image
+Found a problem or tried a new setup? Share a bug report, suggest a feature, or
+send a hardware compatibility report. The [diagnostics guide](https://github.com/60plus/steamos-nvidia-installer/wiki/Diagnostics-and-test-results)
+explains what to include.
 
-Get it straight from Valve:
+Based on [28allday/steamos-nvidia-installer](https://github.com/28allday/steamos-nvidia-installer),
+with additional PC integration, recovery checks and desktop maintenance tools.
+The original MIT license and copyright notice are retained. See
+[How it works](https://github.com/60plus/steamos-nvidia-installer/wiki/How-it-works) for the architecture.
 
-**https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227#install**
-
-Download the recovery image and decompress it — you end up with a `.img` file:
-
-```bash
-bunzip2 steamdeck-*.img.bz2
-```
-
-## Step 2 — Build the NVIDIA installer image
-
-Put the `.img` next to the script and run it (with no argument it
-auto-detects a single recovery image sitting beside it):
-
-```bash
-sudo ./steamos-nvidia-installer.sh steamdeck-<version>.img
-```
-
-This copies the image (**the original is never modified**), resolves the
-NVIDIA open driver from Arch Linux (the current one, or the branch you asked
-for with `--driver`), pins it to permanent archive URLs, verifies every binary is compatible with the image's glibc, compiles
-the kernel module against the image's exact kernel in a throwaway build
-chroot, installs the driver, and adds a one-click installer to the desktop.
-Takes roughly 10–20 minutes. The result is:
-
-```
-steamdeck-<version>-nvidia-usbinstall.img
-```
-
-### Optional: Xbox Series Bluetooth controller support (xpadneo)
-
-If an Xbox One S / Xbox Series controller pairs over Bluetooth but the
-sticks and buttons are not detected correctly, you can use the included
-`build-xpadneo.sh` wrapper. It adds **xpadneo v0.10.4**, a Linux kernel
-driver for Xbox controllers over Bluetooth, and builds it against the exact
-SteamOS kernel contained in the recovery image.
-
-The wrapper is an optional build path and **does not modify the upstream
-`steamos-nvidia-installer.sh`**. It creates a temporary patched copy during
-the build and then runs the normal NVIDIA installer.
-
-First make sure these three files are in the same directory:
-
-```
-steamos-nvidia-installer.sh
-build-xpadneo.sh
-steamdeck-<version>.img
-```
-
-Then use the wrapper instead of the command above:
-
-```bash
-sudo ./build-xpadneo.sh steamdeck-<version>.img
-```
-
-The wrapper automatically:
-
-- adds xpadneo v0.10.4
-- builds xpadneo against the exact SteamOS kernel from the recovery image
-- installs the xpadneo kernel module
-- installs the required udev rules
-- adds the Xbox Series Bluetooth LE configuration
-- builds the NVIDIA driver as usual
-- produces the same `steamdeck-<version>-nvidia-usbinstall.img` output
-
-**Important:** if the controller connects but inputs are missing, also connect
-the controller to Windows and check for a firmware update in the **Xbox
-Accessories** app. In testing, updating the Xbox Series controller firmware
-was required before the controller worked correctly in SteamOS.
-
-### Picking a driver branch
-
-By default you get whatever `nvidia-open` current Arch ships. To pin a
-specific branch instead — SteamOS itself ships 575.x — pass `--driver`:
-
-```bash
-sudo ./steamos-nvidia-installer.sh --driver 580 steamdeck-<version>.img
-```
-
-The argument is `latest` (default) or a version prefix: a branch (`580`), a
-release (`580.105.08`), or an exact build (`580.105.08-4`). The newest
-matching build is taken from
-[Arch's package archive](https://archive.archlinux.org/packages/n/nvidia-utils/),
-and the matching `nvidia-open-dkms`, `lib32-nvidia-utils` and any support
-package the frozen SteamOS image lacks (e.g. `egl-wayland2`, only a
-dependency from 590 on) are pinned to the same release. Turing (RTX
-20-series) or newer is required on every branch.
-
-Rebuilding with a different branch in the same `--workdir` is fine — the
-build overlay is cleared automatically when the cached version doesn't match
-(the downloaded packages are kept).
-
-## Step 3 — Flash it to USB
-
-```bash
-sudo dd if=steamdeck-<version>-nvidia-usbinstall.img of=/dev/sdX bs=4M status=progress conv=fsync
-```
-
-Replace `/dev/sdX` with your USB stick (check with `lsblk` — **everything on
-it will be erased**).
-
-## Step 4 — Boot the USB and install
-
-1. Boot the target machine from the USB stick (UEFI boot menu, Secure Boot off).
-2. It boots into a SteamOS desktop. Double-click one of the icons:
-   - **Install SteamOS (NVIDIA) to Hard Drive** — fresh install; erases the
-     chosen disk completely.
-   - **Upgrade SteamOS (NVIDIA) — keeps games & data** — reinstalls only the
-     OS partitions on a disk that already has SteamOS, preserving your games,
-     saves and Steam login.
-3. Pick the target disk, confirm, and wait a few minutes. The machine powers
-   off when done.
-4. Remove the USB stick and boot. First boot lands in the Steam setup
-   screen, then it's a normal SteamOS machine — Game Mode, Desktop Mode,
-   the lot.
-
----
-
-## OS updates
-
-Updates from inside Steam **just work** (this is the default). Valve's
-updater stages the new OS version as usual, then the driver is
-automatically rebuilt for the new version before the reboot prompt appears
-(adds 10–20 minutes to an update). If the rebuild fails for any reason,
-the update is cancelled and the machine keeps booting the current working
-system — it fails safe.
-
-To move to a **different driver** later, rebuild the USB image (each run
-re-resolves the driver — latest by default, or whatever `--driver` names)
-and reinstall using the **Upgrade** icon. The installed system stays on the
-driver it was built with until you do; updates never drift it to another
-version.
-
-Alternative update modes at build time:
-
-| Flag | Behaviour |
-|---|---|
-| *(default)* | Self-healing updates as described above |
-| `--hold-updates` | Steam always reports "up to date" — OS is frozen |
-| `--no-hold-updates` | Stock updates — **an OS update will remove the driver** |
-
-## All options
-
-```
---driver SPEC      Driver to install: latest (default), or a branch/version
-                   prefix — 580, 580.105.08, 580.105.08-4.
---hold-updates     Hard-hold OS updates instead of self-healing.
---no-hold-updates  Stock update behaviour (driver lost on update!).
---no-installer     Skip the desktop installer — just a bootable patched OS.
---trim-cuda        Drop CUDA/OpenCL/OptiX libraries (~350 MB smaller).
---skip-sigcheck    Disable pacman signature checks in the build chroot.
---workdir DIR      Build cache location (~3 GB, speeds up reruns).
-```
-
-## Troubleshooting
-
-**Black screen on first boot of the installed system** — power-cycle once
-before digging deeper; SteamOS hides its boot console (it lives on tty4–6),
-so a working boot can look black for a while. If it persists, press
-`Ctrl+Alt+F3`, log in as `deck`, and run `steamos-session-select plasma`
-to get a desktop for diagnosis.
-
-**The build says "No repair_device.sh in image home"** — the `.img` you
-fed it isn't the recovery/repair image. Use the recovery image from the
-link in Step 1.
-
-**pacman signature errors during the build** — rerun with
-`--skip-sigcheck` (packages come from Valve's and Arch's own servers over
-HTTPS).
-
-**Hybrid graphics laptops (iGPU + RTX)** — desktops with only an RTX card
-are the clean path. On hybrids the iGPU may own the boot display; results
-vary.
-
-**Screen flickering or artifacts when the cursor is idle** — usually
-adaptive sync (VRR). Try, in order: turn off adaptive sync on the
-monitor/in display settings; disable VRR for the output
-(`kscreen-doctor -o` to find the output ID, then
-`kscreen-doctor output.<ID>.vrrpolicy.never` and reboot); set
-`KWIN_DRM_NO_DIRECT_SCANOUT=1`; or enable developer settings and toggle
-**force composite pipeline**. Lowering Automatic Image Scaling one step
-has also worked. (Community fixes from issue #7.)
-
-**Xbox controller pairs but sticks/buttons do nothing** (rumble and
-battery status work) — the controller firmware is too old for the kernel's
-Bluetooth LE pairing. Connect it to a Windows machine, update its firmware
-in the **Xbox Accessories** app, and pair again. (From issue #12.)
-
-**Steam logged out / games gone after a reflash** — images built before
-the OOBE steam-wrapper fix wiped Steam's data on every boot of the
-installed system until the first OS update. Rebuild with the current
-script; the wipe is disabled at build time.
-
-## Security note
-
-The installed system ships a passwordless-sudo drop-in for the `deck` user
-(the desktop installer needs it). Once you've set a password
-(`passwd` in Desktop Mode), remove it:
-
-```bash
-sudo rm /etc/sudoers.d/zz-deck-nopasswd
-```
-
-## Disclaimer
-
-Not affiliated with, authorised by, or endorsed by Valve or NVIDIA. SteamOS
-is Valve's; the NVIDIA driver is NVIDIA's. This is an independent hobby
-project that wires them together on your own hardware — use at your own
-risk. Tested on SteamOS 3.8.10–3.8.14 recovery images with an RTX 5060 Ti
-and NVIDIA driver 610.43.03.
+Independent project, not affiliated with or endorsed by Valve or NVIDIA.
+The build instructions use Valve's official recovery download as the starting point.
+See [LICENSE](LICENSE).

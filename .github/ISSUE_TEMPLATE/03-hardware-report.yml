@@ -1,0 +1,169 @@
+name: Hardware compatibility report
+description: Share what works on your PC and which features you tested.
+title: '[Hardware]: '
+body:
+- type: markdown
+  attributes:
+    value: Share results from your own PC. Select Not tested for anything you did not check. A successful
+      report describes this configuration, not every card in the same family.
+- type: input
+  id: installer-release
+  attributes:
+    label: Installer release
+    description: Use the release number from your download, for example 0.1.0. For your own build, give the source commit. Write unknown if needed.
+  validations:
+    required: true
+- type: input
+  id: image-filename
+  attributes:
+    label: Image filename
+    description: The filename you downloaded or built.
+- type: input
+  id: steamos-version
+  attributes:
+    label: SteamOS version
+    description: The installed OS version, for example 3.8.16. Write unknown if it cannot boot.
+  validations:
+    required: true
+- type: input
+  id: nvidia-version
+  attributes:
+    label: NVIDIA driver version
+    description: Read it from the diagnostic report or nvidia-smi. Write unknown if unavailable.
+  validations:
+    required: true
+- type: textarea
+  id: hardware
+  attributes:
+    label: Hardware
+    description: Use exact model names where available.
+    placeholder: 'CPU:
+
+      GPU:
+
+      Motherboard / PC model:
+
+      Monitor / TV:
+
+      Installation disk:'
+  validations:
+    required: true
+- type: textarea
+  id: display
+  attributes:
+    label: Display connection and settings
+    placeholder: 'HDMI / DisplayPort, adapters:
+
+      Resolution and refresh rate:
+
+      HDR on/off:
+
+      VRR on/off:'
+  validations:
+    required: true
+- type: dropdown
+  id: target
+  attributes:
+    label: Installation target
+    options:
+    - Internal disk
+    - External USB disk
+    - Installer USB only
+  validations:
+    required: true
+- type: textarea
+  id: peripherals
+  attributes:
+    label: Audio, network and controller devices
+    description: Include exact models and connection types where possible.
+- type: dropdown
+  id: installation
+  attributes:
+    label: Boot and installation
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: dropdown
+  id: update
+  attributes:
+    label: SteamOS update
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: dropdown
+  id: game
+  attributes:
+    label: Game / Proton
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: dropdown
+  id: audio
+  attributes:
+    label: Audio
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: dropdown
+  id: controller
+  attributes:
+    label: Controller buttons and rumble
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: dropdown
+  id: sleep
+  attributes:
+    label: Sleep and wake
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: dropdown
+  id: reconnect
+  attributes:
+    label: Network and Bluetooth reconnect after wake
+    options:
+    - Works
+    - Partly works
+    - Does not work
+    - Not tested / not applicable
+  validations:
+    required: true
+- type: textarea
+  id: details
+  attributes:
+    label: Details and limitations
+    description: List tested games and Proton versions, update versions, the wake method, and anything
+      that only works with a workaround. Link a separate bug report for a problem needing investigation.
+- type: textarea
+  id: diagnostics
+  attributes:
+    label: Diagnostics and screenshots
+    description: Run `steamos-nvidia-diagnostics > ~/steamos-nvidia-report.txt` and attach the file
+      here. For update failures also attach /var/log/steamos-nvidia-repatch.log and the current boot
+      journal. If unavailable, say what you can access. Remove passwords, keys and unrelated personal
+      data before uploading.

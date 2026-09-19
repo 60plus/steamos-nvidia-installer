@@ -1,0 +1,67 @@
+--- a/src/overlay.h
++++ b/src/overlay.h
+@@ -71,6 +71,8 @@
+    std::string engineVersion;
+    std::string deviceName;
+    std::string gpuName;
++   std::string hardwareGpuLabel;
++   std::string hardwareCpuLabel;
+    std::string driverName;
+    uint32_t applicationVersion;
+    enum EngineTypes engine;
+--- a/src/app/main.cpp
++++ b/src/app/main.cpp
+@@ -373,6 +373,24 @@
+ 
+     HUDElements.vendorID = vendorID;
+     init_system_info();
++    // Use the active OpenGL renderer and CPU reported by the operating system.
++    sw_stats.hardwareGpuLabel = deviceName.substr(0, deviceName.find('/'));
++    if (sw_stats.hardwareGpuLabel.rfind("NVIDIA GeForce ", 0) == 0)
++        sw_stats.hardwareGpuLabel.erase(0, 15);
++    if (glfwExtensionSupported("GL_NVX_gpu_memory_info")) {
++        GLint dedicated_kib = 0;
++        glGetIntegerv(0x9047 /* GPU_MEMORY_INFO_DEDICATED_VIDMEM_NVX */, &dedicated_kib);
++        if (dedicated_kib > 0) {
++            const auto gib = (dedicated_kib + 524288LL) / 1048576LL;
++            sw_stats.hardwareGpuLabel += " (" + std::to_string(gib) + " GB)";
++        }
++    }
++    sw_stats.hardwareCpuLabel = cpu.substr(0, cpu.find(" @ "));
++    const auto cpu_suffix = sw_stats.hardwareCpuLabel.find(" CPU");
++    if (cpu_suffix != std::string::npos)
++        sw_stats.hardwareCpuLabel.erase(cpu_suffix);
++    SPDLOG_INFO("Overlay hardware: {}; {}", sw_stats.hardwareGpuLabel, sw_stats.hardwareCpuLabel);
++
+     sw_stats.engine = EngineTypes::GAMESCOPE;
+     std::thread(msg_read_thread).detach();
+     std::thread(ctrl_thread).detach();
+--- a/src/hud_elements.cpp
++++ b/src/hud_elements.cpp
+@@ -285,6 +285,13 @@
+     if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_gpu_stats] && gpus){
+         for (auto& gpu : gpus->selected_gpus()) {
+             ImguiNextColumnFirstItem();
++            if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_mangoapp_steam] &&
++                (current_preset == 3 || current_preset == 4) &&
++                gpus->selected_gpus().size() == 1 && !HUDElements.sw_stats->hardwareGpuLabel.empty()) {
++                HUDElements.TextColored(HUDElements.colors.gpu, "%s", HUDElements.sw_stats->hardwareGpuLabel.c_str());
++                ImGui::TableNextRow();
++                ImguiNextColumnFirstItem();
++            }
+             HUDElements.TextColored(HUDElements.colors.gpu, "%s", gpu->gpu_text().c_str());
+ 
+             ImguiNextColumnOrNewRow();
+@@ -421,6 +428,12 @@
+ void HudElements::cpu_stats(){
+     if(HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_cpu_stats]){
+         ImguiNextColumnFirstItem();
++        if (HUDElements.params->enabled[OVERLAY_PARAM_ENABLED_mangoapp_steam] &&
++            (current_preset == 3 || current_preset == 4) && !HUDElements.sw_stats->hardwareCpuLabel.empty()) {
++            HUDElements.TextColored(HUDElements.colors.cpu, "%s", HUDElements.sw_stats->hardwareCpuLabel.c_str());
++            ImGui::TableNextRow();
++            ImguiNextColumnFirstItem();
++        }
+         const char* cpu_text;
+         if (HUDElements.params->cpu_text.empty())
+             cpu_text = "CPU";
