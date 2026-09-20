@@ -24,3 +24,5 @@ system cannot start.
 This manual describes the code on the branch you are reading. Fresh installation
 erases the selected disk. The Upgrade option is intended for an existing SteamOS
 layout and does not replace a backup.
+
+For a Windows host, see [Build on Windows](Build-on-Windows.md).

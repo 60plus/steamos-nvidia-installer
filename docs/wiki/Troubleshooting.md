@@ -270,6 +270,18 @@ before retrying. The Gamescope binary must remain covered by checksum validation
 do not disable addon checks or manually activate the failed slot.
 
 
+## Remote Play client codec setting
+
+On the receiving device, open Steam's **Settings > Remote Play > Advanced Client
+Options**, enable **HEVC Video**, then disconnect and reconnect the stream. For
+the reverse direction, check the same option on the other receiving device.
+
+The complete installer image has passed a tester's Remote Play check in both
+directions with HEVC enabled manually. This setting is not enabled automatically
+by the installer. The result does not establish that HEVC is required for every
+client or that H.264 cannot work. If HEVC does not resolve the problem, collect
+the streaming logs and follow the display and encoder checks below.
+
 ## Remote Play connects but shows black video
 
 Check the host's `~/.local/share/Steam/logs/streaming_log.txt` and Game Mode

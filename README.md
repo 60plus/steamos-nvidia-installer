@@ -41,22 +41,30 @@ Fresh installation erases the selected disk. Read the
 **Display tip:** if HDMI gives you a green screen, flickering or trouble with HDR
 and VRR, try a direct DisplayPort connection when available. See the [display troubleshooting guide](https://github.com/60plus/steamos-nvidia-installer/wiki/Troubleshooting#hdr-and-hdmi).
 
-## From recovery image to Game Mode
+## Quick start
 
-The project distributes source code, tools and integration updates, not Valve's
-recovery image or a complete SteamOS disk image. Download the recovery image
-directly from Valve and build your installer locally.
+Build the complete installer with the overlay, Remote Play fixes and desktop
+updater included. Start with Linux or a [Linux VM on Windows](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-on-Windows).
+Allow at least 50 GiB free on the Linux work filesystem after downloading the input.
 
-1. Download and unpack the official SteamOS recovery image.
-2. Build the NVIDIA image with this repository.
-3. Write it to USB, boot your PC and choose the desktop installer.
+1. Download Valve's **SteamOS 3.8.14 recovery image** through the
+   [official recovery page](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227#install)
+   and unpack it. The current complete builder requires this baseline.
+2. Clone this repository using the HTTPS URL from its Code menu. In the checkout run:
 
-Custom builds include the overlay, Remote Play components and desktop updater through
-the build options documented in the manual. The basic build command does not add
-those components automatically.
+   ```bash
+   sudo bash tools/build-complete.sh /path/to/recovery.img
+   ```
 
-The [manual](https://github.com/60plus/steamos-nvidia-installer/wiki) covers each step, driver options, updates,
-display settings and controller setup.
+3. Write the resulting `recovery-nvidia-usbinstall.img` to a USB drive, boot the PC
+   and choose **Install SteamOS (NVIDIA)** on the desktop.
+
+The script prepares the build environment and components for you, preserves the
+original image and writes a SHA256 checksum beside the result. The project does
+not distribute Valve's recovery image or a complete SteamOS image.
+
+See the [complete build guide](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-the-USB-image)
+for prerequisites and options, then [installation instructions](https://github.com/60plus/steamos-nvidia-installer/wiki/Install-and-first-boot).
 
 ## Help improve PC support
 

@@ -37,3 +37,5 @@ HDR starts off for new display profiles. Enable it later in Steam's display
 settings if the connection supports it. HDMI and DisplayPort can behave differently
 on the same screen. An optional [Safe Graphics](Safe-Graphics.md) session is available in new builds,
 and must be selected manually. Automatic recovery from a failed boot is not provided.
+
+For a Windows host, see [Build on Windows](Build-on-Windows.md).

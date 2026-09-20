@@ -321,3 +321,33 @@ Device testing on RTX 5060 confirmed HEVC SDR encoding, reconnect and automatic
 helper startup after reboot. A fresh installation followed by the 3.8.14 to 3.8.16
 OS update preserved the packaged bridge and service. Encoding also worked after
 deep suspend/resume. Other GPUs and later OS updates require their own validation.
+
+
+## Windows build helper
+
+`tools/build-on-windows.ps1` connects to an existing Linux build VM over SSH and
+runs the same image builder. It quotes paths and options for the remote shell,
+uses the normal interactive SSH/sudo authentication and propagates failures.
+It does not create a VM, distribute a recovery image or replace package checks.
+
+Before the build, `tools/check-build-host.sh` checks tools, local filesystem type
+and space. Its temporary loop-backed Btrfs image and OverlayFS write test run in
+a private mount namespace. Cleanup removes only its own temporary probe after
+unmounting and detaching; failed cleanup retains the directory for inspection.
+See [Build on Windows](Build-on-Windows.md) for setup and validation limits.
+
+
+## Complete image build
+
+`tools/build-complete.sh` opens the original 3.8.14 recovery image with a read-only
+loop device. It mounts rootfs-A read-only with log replay disabled, then uses a
+separate writable OverlayFS layer for build dependencies and compilation. The
+original image is not the build root's writable filesystem.
+
+The four existing component builders run in order. Once all succeed, the wrapper
+stops background processes rooted in that build environment, unmounts it and
+discards its compilation layer, then invokes the
+normal installer with every artifact and updater source. A failure prevents later
+stages from running. The output checksum is only generated after the installer
+returns successfully. See [Complete build](Build-the-USB-image.md#complete-build)
+for defaults, space requirements and the current validation scope.
