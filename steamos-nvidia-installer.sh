@@ -146,7 +146,7 @@ INSTALLER_VERSION="$(cat "$SCRIPT_DIR/VERSION")"
 [[ "$INSTALLER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] \
   || die "Invalid installer VERSION"
 log "Installer version: $INSTALLER_VERSION"
-[[ -f "$SCRIPT_DIR/lib/pc-support.sh" && -f "$SCRIPT_DIR/scripts/steamos-nvidia-diagnostics" && -f "$SCRIPT_DIR/scripts/hdr-defaults.py" && -f "$SCRIPT_DIR/scripts/safe-graphics.py" && -f "$SCRIPT_DIR/scripts/bluetooth-resume.py" && -f "$SCRIPT_DIR/scripts/install-target.py" && -f "$SCRIPT_DIR/scripts/patch-repair.py" ]] \
+[[ -f "$SCRIPT_DIR/scripts/notification-renderer.py" && -f "$SCRIPT_DIR/lib/pc-support.sh" && -f "$SCRIPT_DIR/scripts/steamos-nvidia-diagnostics" && -f "$SCRIPT_DIR/scripts/hdr-defaults.py" && -f "$SCRIPT_DIR/scripts/safe-graphics.py" && -f "$SCRIPT_DIR/scripts/bluetooth-resume.py" && -f "$SCRIPT_DIR/scripts/install-target.py" && -f "$SCRIPT_DIR/scripts/patch-repair.py" ]] \
   || die "Missing support files. Clone the full repository before building."
 # shellcheck source=lib/pc-support.sh
 source "$SCRIPT_DIR/lib/pc-support.sh"
@@ -475,7 +475,7 @@ fi
 # Reusing an overlay from another image or addon selection can mix kernels
 # and leave a disabled addon in the output. The package download cache is kept.
 CACHE_KEY="$( {
-  sha256sum "$IMG" "$SCRIPT_DIR/steamos-nvidia-installer.sh" "$SCRIPT_DIR/lib/pc-support.sh" "$SCRIPT_DIR/scripts/hdr-defaults.py" "$SCRIPT_DIR/scripts/safe-graphics.py" "$SCRIPT_DIR/scripts/bluetooth-resume.py" "$SCRIPT_DIR/scripts/install-target.py" "$SCRIPT_DIR/scripts/patch-repair.py"
+  sha256sum "$SCRIPT_DIR/scripts/notification-renderer.py" "$IMG" "$SCRIPT_DIR/steamos-nvidia-installer.sh" "$SCRIPT_DIR/lib/pc-support.sh" "$SCRIPT_DIR/scripts/hdr-defaults.py" "$SCRIPT_DIR/scripts/safe-graphics.py" "$SCRIPT_DIR/scripts/bluetooth-resume.py" "$SCRIPT_DIR/scripts/install-target.py" "$SCRIPT_DIR/scripts/patch-repair.py"
   sha256sum "$SCRIPT_DIR/VERSION"
   if [[ -n "$NVENC_DIR" ]]; then
     (cd "$NVENC_DIR" && find . -type f -print0 | sort -z | xargs -0 sha256sum)
@@ -566,6 +566,7 @@ log "Built nvidia-open $NVIDIA_VER for $KVER"
 
 mkdir -p "$MNT/usr/lib/steamos-nvidia"
 install -m 644 "$SCRIPT_DIR/lib/pc-support.sh" "$MNT/usr/lib/steamos-nvidia/pc-support.sh"
+install -m 644 "$SCRIPT_DIR/scripts/notification-renderer.py" "$MNT/usr/lib/steamos-nvidia/notification-renderer.py"
 install -m 644 "$SCRIPT_DIR/scripts/hdr-defaults.py" "$MNT/usr/lib/steamos-nvidia/hdr-defaults.py"
 install -m 755 "$SCRIPT_DIR/scripts/safe-graphics.py" "$MNT/usr/lib/steamos-nvidia/safe-graphics.py"
 install -m 755 "$SCRIPT_DIR/scripts/bluetooth-resume.py" "$MNT/usr/lib/steamos-nvidia/bluetooth-resume.py"
@@ -764,7 +765,7 @@ source /usr/lib/steamos-nvidia/pc-support.sh
 DRIVER_CONFIG="$(/usr/bin/python3 -I /usr/lib/steamos-nvidia/driver-change.py request-config)"
 source "$DRIVER_CONFIG"
 : "${ADD_XPADNEO:=0}" "${XPADNEO_VERSION:=v0.10.4}" "${XPADNEO_SHA256:=}" "${TRIM_CUDA:=0}"
-FINGERPRINT="$( { sha256sum < "$DRIVER_CONFIG"; sha256sum /usr/lib/steamos-nvidia/pc-support.sh /usr/lib/steamos-nvidia/hdr-defaults.py /usr/lib/steamos-nvidia/safe-graphics.py /usr/lib/steamos-nvidia/bluetooth-resume.py /usr/lib/steamos-nvidia/install-target.py /usr/lib/steamos-nvidia/driver-change.py /usr/lib/steamos-nvidia/driver-stage.sh /usr/lib/steamos-nvidia/driver-manager.py /usr/lib/steamos-nvidia/repatch.sh; } | sha256sum | cut -d ' ' -f1)"
+FINGERPRINT="$( { sha256sum < "$DRIVER_CONFIG"; sha256sum /usr/lib/steamos-nvidia/notification-renderer.py /usr/lib/steamos-nvidia/pc-support.sh /usr/lib/steamos-nvidia/hdr-defaults.py /usr/lib/steamos-nvidia/safe-graphics.py /usr/lib/steamos-nvidia/bluetooth-resume.py /usr/lib/steamos-nvidia/install-target.py /usr/lib/steamos-nvidia/driver-change.py /usr/lib/steamos-nvidia/driver-stage.sh /usr/lib/steamos-nvidia/driver-manager.py /usr/lib/steamos-nvidia/repatch.sh; } | sha256sum | cut -d ' ' -f1)"
 EXPECTED_XPADNEO=""
 [[ $ADD_XPADNEO -eq 0 ]] || EXPECTED_XPADNEO="$XPADNEO_VERSION"
 WAS_RO=0
@@ -1234,7 +1235,7 @@ fi
   printf 'Update mode: %s\nInstaller: %s\nTrim CUDA: %s\nxpadneo enabled: %s\n' \
     "$UPDATE_MODE" "$ADD_INSTALLER" "$TRIM_CUDA" "$ADD_XPADNEO"
   printf 'Source file SHA256:\n'
-  (cd "$SCRIPT_DIR" && sha256sum VERSION steamos-nvidia-installer.sh lib/pc-support.sh scripts/steamos-nvidia-diagnostics scripts/hdr-defaults.py scripts/safe-graphics.py scripts/bluetooth-resume.py scripts/install-target.py scripts/patch-repair.py)
+  (cd "$SCRIPT_DIR" && sha256sum VERSION scripts/notification-renderer.py steamos-nvidia-installer.sh lib/pc-support.sh scripts/steamos-nvidia-diagnostics scripts/hdr-defaults.py scripts/safe-graphics.py scripts/bluetooth-resume.py scripts/install-target.py scripts/patch-repair.py)
 } > "$MNT/usr/lib/steamos-nvidia/build-info.txt"
 
 if [[ $EXPERIMENTAL_BETA == 1 ]]; then

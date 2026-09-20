@@ -115,6 +115,9 @@ pc_write_complete() {
 pc_install_display_policy() {
   local root="$1" session="$1/usr/lib/steamos/gamescope-session" temp
   local hook='. /usr/lib/steamos-nvidia/display-session.sh'
+  if declare -F pc_install_bundled_notification_renderer >/dev/null; then
+    pc_install_bundled_notification_renderer "$root" || return 1
+  fi
   [[ -f "$session" ]] || { echo "Missing Gamescope session: $session" >&2; return 1; }
   # Retire the ineffective legacy environment override, preserving Valve's file.
   if grep -Fxq "$hook" "$session"; then
@@ -130,6 +133,24 @@ pc_install_display_policy() {
 # Seed missing settings before Steam reads config.vdf. Never overwrite a choice.
 ExecStartPre=/usr/bin/python3 /usr/lib/steamos-nvidia/hdr-defaults.py
 HDR_SERVICE
+  if [[ -f "$root/usr/lib/steamos-nvidia/notification-renderer.py" ]]; then
+    cat > "$root/usr/lib/systemd/user/steam-launcher.service.d/25-nvidia-notifications.conf" <<'NOTIFICATION_SERVICE'
+[Unit]
+Wants=steamos-nvidia-notifications.service
+NOTIFICATION_SERVICE
+    cat > "$root/usr/lib/systemd/user/steamos-nvidia-notifications.service" <<'NOTIFICATION_WORKER'
+[Unit]
+Description=Apply verified Steam notification workaround after client verification
+After=steam-launcher.service
+PartOf=steam-launcher.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /usr/lib/steamos-nvidia/notification-renderer.py startup
+TimeoutStartSec=130
+RemainAfterExit=yes
+NOTIFICATION_WORKER
+  fi
   [[ -f "$root/usr/lib/steamos-nvidia/safe-graphics.py" ]] || return 1
   mkdir -p "$root/usr/bin" "$root/usr/share/applications" "$root/usr/lib/systemd/user/gamescope-session.service.d"
   ln -sfn /usr/lib/steamos-nvidia/safe-graphics.py "$root/usr/bin/steamos-nvidia-safe-graphics"
@@ -321,6 +342,9 @@ pc_write_addon_manifest() {
     usr/lib/systemd/user/steamos-nvidia-bluetooth-resume.service \
     usr/share/applications/steamos-nvidia-safe-graphics.desktop \
     usr/share/applications/steamos-nvidia-normal-graphics.desktop) > "$root/usr/lib/steamos-nvidia/addons.sha256"
+  if [[ -f "$root/usr/lib/steamos-nvidia/notification-renderer.py" ]]; then
+    (cd "$root" && sha256sum usr/lib/steamos-nvidia/notification-renderer.py usr/lib/systemd/user/steam-launcher.service.d/25-nvidia-notifications.conf usr/lib/systemd/user/steamos-nvidia-notifications.service) >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
+  fi
   if [[ -d "$root/usr/lib/steamos-nvidia/nvenc" ]]; then
     (cd "$root" && find usr/lib/steamos-nvidia/nvenc -type f -print0 | sort -z | xargs -0 sha256sum && sha256sum usr/lib32/dri/nvidia_drv_video.so usr/lib/systemd/user/steamos-nvidia-nvenc.service usr/lib/systemd/user/steam-launcher.service.d/45-nvidia-nvenc.conf) >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
   fi

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build a signed installer integration release; never uploads or publishes it."""
 import argparse
+import base64
 import hashlib
 import importlib.util
 import io
@@ -15,6 +16,30 @@ m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
 
+def bundled_support():
+    # Keep the archive contract accepted by public 0.1.0/0.1.1 updaters.
+    # Their existing apply step sources this signed script before installing units.
+    helper = (ROOT / 'scripts/notification-renderer.py').read_bytes()
+    encoded = base64.b64encode(helper).decode()
+    sha = hashlib.sha256(helper).hexdigest()
+    function = f'''
+# Generated from scripts/notification-renderer.py by the release builder.
+pc_install_bundled_notification_renderer() {{
+  local root="$1" target="$1/usr/lib/steamos-nvidia/notification-renderer.py" staged
+  mkdir -p "$root/usr/lib/steamos-nvidia" || return 1
+  staged="$(mktemp "$target.XXXXXX")" || return 1
+  if ! printf '%s' '{encoded}' | base64 -d > "$staged"; then
+    rm -f "$staged"; return 1
+  fi
+  if [[ $(sha256sum "$staged" | cut -d ' ' -f1) != {sha} ]]; then
+    rm -f "$staged"; return 1
+  fi
+  chmod 644 "$staged" && mv "$staged" "$target"
+}}
+'''
+    return (ROOT / 'lib/pc-support.sh').read_bytes() + function.encode()
+
+
 def build(output, version, steamos, notes, key, mangoapp_dir=None):
     if not m.VERSION_RE.fullmatch(version):
         raise ValueError('Invalid release version')
@@ -26,7 +51,9 @@ def build(output, version, steamos, notes, key, mangoapp_dir=None):
             if mangoapp_dir is not None:
                 contents[name] = (mangoapp_dir / name).read_bytes()
             continue
-        if name == 'repatch.sh':
+        if name == 'pc-support.sh':
+            contents[name] = bundled_support()
+        elif name == 'repatch.sh':
             contents[name] = (installer.split("<<'REPATCH'\n", 1)[1].split('\nREPATCH\n', 1)[0] + '\n').encode()
         elif name == 'steamos-update':
             contents[name] = (installer.split("<<'WRAP'\n", 1)[1].split('\nWRAP\n', 1)[0] + '\n').encode()

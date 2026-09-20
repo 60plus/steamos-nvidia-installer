@@ -50,7 +50,7 @@ Allow at least 50 GiB free on the Linux work filesystem after downloading the in
 1. Download Valve's **SteamOS 3.8.14 recovery image** through the
    [official recovery page](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227#install)
    and unpack it. The current complete builder requires this baseline.
-2. Download and extract **Source code (zip)** from [release 0.1.1](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.1), or clone tag `v0.1.1`. Open the extracted repository folder and run:
+2. Download and extract **Source code (zip)** from [release 0.1.2](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.2), or clone tag `v0.1.2`. Open the extracted repository folder and run:
 
    ```bash
    sudo bash tools/build-complete.sh /path/to/recovery.img

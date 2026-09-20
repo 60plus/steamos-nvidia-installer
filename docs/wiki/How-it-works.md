@@ -351,3 +351,56 @@ normal installer with every artifact and updater source. A failure prevents late
 stages from running. The output checksum is only generated after the installer
 returns successfully. See [Complete build](Build-the-USB-image.md#complete-build)
 for defaults, space requirements and the current validation scope.
+
+## Embedded Steam notifications
+
+Installer 0.1.2 includes `notification-renderer.py`. For the reviewed Steam client
+assets (Stable build 1788652215 and Beta build 1789781627), the helper
+selects the client's existing embedded toast renderer instead of the separate
+notification BrowserView. It does not filter pixels or disable notifications.
+
+A user service starts with `steam-launcher.service` and waits up to 120 seconds
+for the main Steam browser process. It accepts
+only a complete SHA-256 hash from its list of reviewed JavaScript assets, verifies a single
+known replacement, saves the original under
+`~/.local/state/steamos-nvidia/notifications/`, then replaces the asset atomically.
+The replacement preserves the original byte length to avoid triggering Steam's
+routine file-size repair. Full integrity verification can still restore the asset;
+no Steam verification mechanism is disabled. No Steam JavaScript asset is
+distributed with the installer. An unrecognized
+asset is left unchanged, and failure does not block Steam startup. Restoring a
+backup also requires the current file to match this exact patch; a newer Steam
+asset is never replaced with an older backup.
+
+Steam verifies its client assets during startup and can restore the original UI
+before opening its browser. Applying the patch before Steam starts is therefore
+insufficient. The service waits for that browser, applies the verified patch and
+reloads only that browser once when the file was changed. Steam respawns it. The
+service then exits; it does not continuously watch files or restart the UI during
+a session. A brief UI reload can occur at startup.
+
+An unknown client asset is skipped without a reload. A new client version needs
+a reviewed hash and visual testing. A client update later in the same session may
+restore the original; the next Game Mode start checks again. Direct Desktop Mode
+launches do not run this service, although the patched asset is shared with
+desktop Big Picture. The current workaround has been tested after restart, from
+Beta to Preview and back to Stable. Those tests used the supported client builds;
+they do not establish compatibility with future client releases. Fresh installation and its first system update have also been verified.
+
+The project helper and startup hook are restored in the inactive system slot by
+the existing repatch process. The client asset and backup live in the user's home
+directory, outside the A/B root filesystems. Use `status`, `disable` or `enable`
+with the helper to inspect or change this workaround, then restart Steam when
+no game is running.
+
+Signed update packages embed the helper in `pc-support.sh`, which is already part
+of the archive format accepted by updaters 0.1.0 and 0.1.1. During preparation,
+that signed script installs the helper into the inactive slot and verifies its
+checksum before enabling the startup hook. The package retains the existing file
+allowlist and signing key. Image builds install the same helper directly.
+
+The Stable and Beta client assets have separate exact replacements and backups.
+Controller, download-complete, message and Remote Play notifications were
+verified without black borders, including notifications over a running game and
+during streaming. Game icons, avatars and message previews were preserved. This is a client
+compatibility list, not a guarantee for future SteamOS or Steam client releases.

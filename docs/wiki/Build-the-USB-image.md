@@ -55,14 +55,14 @@ are stopped before unmounting; unrelated host services are not stopped.
 
 ## Get the repository
 
-Use [release 0.1.1](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.1). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+Use [release 0.1.2](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.2). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
 
 ```bash
-git clone --branch v0.1.1 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
+git clone --branch v0.1.2 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
 cd steamos-nvidia-installer
 ```
 
-The complete one-command builder is included starting with 0.1.1. The source
+The complete one-command builder is included starting with 0.1.2. The source
 archives attached to 0.1.0 do not include it. The three `installer-*` assets are
 for Installer Update, not source archives or bootable images.
 

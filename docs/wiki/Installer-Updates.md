@@ -12,12 +12,6 @@ The shortcut is included only in builds configured with a signed release source.
 If it is missing, updating SteamOS will not add it. Use an installer that includes
 the updater or a bootstrap procedure supplied by the maintainer.
 
-Release 0.1.1 adds build tools and documentation. Its installed runtime payload
-is unchanged from 0.1.0; existing users do not need to reinstall SteamOS. The
-signed package advances the installer-tools version, but does not put the image
-builder on the installed desktop. To build a new USB image, download the 0.1.1
-source archive. The signed update retains its existing SteamOS 3.8.16 eligibility.
-
 ## Install an update
 
 1. Finish any pending SteamOS update and reboot first.
@@ -43,6 +37,16 @@ The updater only delivers components included in its signed package. It can
 preserve existing Remote Play artifacts, but it does not currently add new
 Gamescope, receiver or NVENC binaries to systems that lack them. Use a prepared
 image containing those components when they are needed.
+
+## Updating from an older installer
+
+Release packages contain the current set of installer tools, so you can update
+from 0.1.0 directly to 0.1.2 without installing 0.1.1 first. Version 0.1.2 includes
+the notification workaround. The signed package supports SteamOS 3.8.16; finish
+updating SteamOS first if the installed OS is older.
+
+Changes to the complete image builder are available in the source archive. They
+do not require rebuilding a working installation just to receive runtime fixes.
 
 ## Return to the previous system
 

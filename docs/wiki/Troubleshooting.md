@@ -58,14 +58,41 @@ Test another cable and port separately. Record HDMI versus DisplayPort, monitor 
 
 ## Black border around Game Mode notifications
 
-Steam notifications can have an opaque black background in Game Mode while
-Desktop Mode notifications look normal. This has been observed on both HDMI
-and DisplayPort, including with HDR off. The background disappears with the
-notification.
+Steam notifications can have an opaque black background in Game Mode and in
+Big Picture launched from Desktop Mode. Notifications in the regular desktop
+Steam interface can look normal on the same system. This has been observed on
+both HDMI and DisplayPort, including with HDR off. The background disappears
+with the notification. Reproduction in desktop Big Picture without Gamescope
+means the symptom is not limited to the Gamescope session.
 
-There is no confirmed fix in this installer. Safe Graphics has not removed this
-symptom. Include the NVIDIA driver and Gamescope versions in a support report,
-and say whether the background remains after the notification closes.
+Installer 0.1.2 includes a guarded workaround that selects Steam's embedded
+notification renderer. It has been checked in desktop Big Picture, Game Mode,
+over a running game and during Remote Play. Controller, download-complete and
+message notifications displayed correctly, including game icons and avatars.
+Restart, fresh installation with its first update, and the Beta to Preview to
+Stable sequence passed with the supported client builds.
+
+On an existing installation, use **SteamOS NVIDIA Installer Update** to install
+0.1.2, then restart. Inspect its state without sudo:
+
+```bash
+python3 /usr/lib/steamos-nvidia/notification-renderer.py status
+```
+
+An unsupported result means the Steam client asset differs from the verified
+version. The helper leaves it unchanged. After a client update the border may
+return. Do not manually replace code in an unknown client version.
+
+To disable the workaround and restore the verified original, run the following
+and restart Steam after closing your game:
+
+```bash
+python3 /usr/lib/steamos-nvidia/notification-renderer.py disable
+```
+
+Use `enable` instead of `disable` to apply it again. See
+[How it works](How-it-works.md#embedded-steam-notifications) for the checks and
+startup limitations. Safe Graphics has not removed this symptom.
 
 ## Red and blue are swapped in Remote Play or screenshots
 
