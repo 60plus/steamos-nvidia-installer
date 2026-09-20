@@ -56,7 +56,7 @@ Allow at least 50 GiB free on the Linux work filesystem after downloading the in
    sudo bash tools/build-complete.sh /path/to/recovery.img
    ```
 
-3. Write the resulting `recovery-nvidia-usbinstall.img` to a USB drive, boot the PC
+3. [Write the resulting `recovery-nvidia-usbinstall.img` to a USB drive](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-the-USB-image#write-the-usb), boot the PC
    and choose **Install SteamOS (NVIDIA)** on the desktop.
 
 The script prepares the build environment and components for you, preserves the

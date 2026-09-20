@@ -99,6 +99,11 @@ SteamOS kernel 6.16.12. A full complete build using this filesystem layout also
 passed in an Arch Linux VM. The VM test does not establish that every installed
 SteamOS system has all required build dependencies; the host check still applies.
 
+A user also completed the full build on an installed SteamOS system using this
+workspace, then confirmed that the image booted after being written with Etcher
+and that changing the NVIDIA driver worked. This does not confirm an OS update
+or every hardware configuration.
+
 ## Get the repository
 
 Use [release 0.1.3](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.3). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
@@ -187,6 +192,14 @@ an untrusted download.
 ## Write the USB
 
 Use an image-writing tool to write the entire output image to the USB device.
+
+Etcher has been confirmed to write a working installer USB. Select the completed
+`.img`, choose the correct USB drive and let writing and verification finish.
+If booting through Ventoy fails, write the image directly to the USB drive with
+Etcher or the `dd` command printed by the builder. One reported setup failed
+with Ventoy and booted after a direct write with Etcher; this is not a claim that
+Ventoy fails on every setup.
+
 Copying the file onto a formatted USB drive is not enough. Verify the destination
 by capacity and model; writing the image erases the USB.
 
