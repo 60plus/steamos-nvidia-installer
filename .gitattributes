@@ -2,3 +2,5 @@
 scripts/* text eol=lf
 *.py text eol=lf
 *.yml text eol=lf
+*.patch text eol=lf
+VERSION text eol=lf

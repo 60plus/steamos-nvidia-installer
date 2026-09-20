@@ -53,16 +53,62 @@ A small real Btrfs/OverlayFS fixture also checks failure cleanup, unchanged inpu
 hashes and refusal to overwrite an existing output. Build-root background agents
 are stopped before unmounting; unrelated host services are not stopped.
 
-## Get the repository
 
-Use [release 0.1.2](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.2). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+## Build on ext4 with casefold
+
+If the host check reports `case-insensitive capable filesystem ... not supported`,
+the kernel cannot use that filesystem as the writable OverlayFS layer. Renaming
+the folder does not change the filesystem feature. Do not disable casefold on
+your existing home partition.
+
+Create a separate ext4 filesystem inside a file and use it for the build work.
+Allow at least 100 GiB of actual free disk space before this example. The 80 GiB
+file is sparse: it grows as the builder writes data, so its apparent size does
+not reserve free space. Keep the original recovery image outside this file.
+
+Run these commands in one terminal, from the unpacked repository directory:
 
 ```bash
-git clone --branch v0.1.2 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
+build_area=$(mktemp -d "$HOME/steamos-build.XXXXXXXX")
+truncate -s 80G "$build_area/work.img"
+mkfs.ext4 -O ^casefold -m 0 "$build_area/work.img"
+mkdir "$build_area/work"
+sudo mount -o loop "$build_area/work.img" "$build_area/work"
+sudo bash tools/build-complete.sh --workdir "$build_area/work/complete" /absolute/path/to/recovery.img
+```
+
+Use source release **0.1.3 or newer** when checking out or exporting the source
+on Windows. It enforces LF line endings for patches and VERSION regardless of
+Git's autocrlf setting. Older Windows checkouts/exports can fail on patch
+application or `Invalid installer VERSION`; ZIP archives downloaded directly
+from GitHub are not affected by that Windows conversion.
+
+The output image and checksum are next to the input recovery image. Once the
+builder has finished and detached its child mounts, unmount the workspace:
+
+```bash
+sudo umount "$build_area/work"
+```
+
+Keep `work.img` if you want to retain logs, artifacts and the driver cache.
+If unmount reports that it is busy, inspect remaining mounts and processes
+before removing anything. Do not reformat or delete your home partition.
+
+The casefold rejection and the file-backed ext4 workaround were tested on
+SteamOS kernel 6.16.12. A full complete build using this filesystem layout also
+passed in an Arch Linux VM. The VM test does not establish that every installed
+SteamOS system has all required build dependencies; the host check still applies.
+
+## Get the repository
+
+Use [release 0.1.3](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.3). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+
+```bash
+git clone --branch v0.1.3 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
 cd steamos-nvidia-installer
 ```
 
-The complete one-command builder is included starting with 0.1.2. The source
+The complete one-command builder is included starting with 0.1.1. The source
 archives attached to 0.1.0 do not include it. The three `installer-*` assets are
 for Installer Update, not source archives or bootable images.
 

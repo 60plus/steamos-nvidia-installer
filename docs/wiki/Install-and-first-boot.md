@@ -3,7 +3,7 @@
 # Install and first boot
 
 First [build the USB image](Build-the-USB-image.md#complete-build) using installer
-release **0.1.2** and write the resulting `.img` to USB. Release source archives
+release **0.1.3** and write the resulting `.img` to USB. Release source archives
 and the signed updater bundle are not bootable images.
 
 ## Boot and install
