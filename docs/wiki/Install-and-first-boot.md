@@ -2,6 +2,10 @@
 
 # Install and first boot
 
+First [build the USB image](Build-the-USB-image.md#complete-build) using installer
+release **0.1.1** and write the resulting `.img` to USB. Release source archives
+and the signed updater bundle are not bootable images.
+
 ## Boot and install
 
 1. Connect one monitor to the NVIDIA card and attach a wired keyboard.
