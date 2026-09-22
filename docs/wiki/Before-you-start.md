@@ -17,9 +17,11 @@ the internal screen may be connected to the integrated GPU.
 
 ## Build machine
 
-Use Linux with root access, preferably an Arch-based system. You need Git,
-Python 3, pacman, losetup, btrfs-progs, rsync, curl, kmod, zstd and binutils
-(including readelf), plus a decompressor for the recovery archive.
+Use Linux with root access. You need Git, Python 3, losetup, btrfs-progs, rsync,
+curl, kmod, zstd and binutils (including readelf), plus a decompressor for the
+recovery archive. Starting with release 0.1.4, the builder uses the pacman
+included in the recovery image, so the host does not need pacman; older releases
+require it. Arch Linux, SteamOS and Bazzite hosts have been used for builds.
 
 The builder checks for at least 20,000 MiB free in the output location before
 starting. Allow additional space for the downloaded input image, a build cache
@@ -38,4 +40,5 @@ settings if the connection supports it. HDMI and DisplayPort can behave differen
 on the same screen. An optional [Safe Graphics](Safe-Graphics.md) session is available in new builds,
 and must be selected manually. Automatic recovery from a failed boot is not provided.
 
-For a Windows host, see [Build on Windows](Build-on-Windows.md).
+For a Windows host, see [Build on Windows](Build-on-Windows.md). For a Bazzite
+host, see [Build on Bazzite](Build-on-Bazzite.md).

@@ -66,8 +66,9 @@
 #   --workdir DIR      Build dir (~3 GB; default: alongside the output).
 #                      Kept between runs - caches the driver build.
 #
-# Host needs: Arch-ish Linux, losetup, btrfs-progs, rsync, curl, kmod, zstd,
-# python3, readelf (binutils).
+# Host needs: Linux with losetup, btrfs-progs, rsync, curl, kmod, zstd,
+# python3 and readelf (binutils). Package queries use the image's own pacman
+# through chroot, so the host does not need pacman.
 # Notes: nvidia-open = RTX 20xx+ (Turing) only. Target machines need UEFI +
 # Secure Boot off. First boot of an installed system lands in the gamescope
 # Steam setup; if it black-screens: Ctrl+Alt+F3 → steamos-session-select plasma.
@@ -118,7 +119,7 @@ while [[ $# -gt 0 ]]; do
     --installer-update-source) INSTALLER_UPDATE_SOURCE="${2:?--installer-update-source needs a JSON source file}"; shift ;;
     --workdir)         WORKDIR="${2:?--workdir needs an argument}"; shift ;;
     -h|--help)
-      sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,/^$/{/^#/p}' "$0" | sed 's/^# \{0,1\}//'
       printf '\n  --experimental-beta  Select SteamOS beta for this test image (selfheal only).\n'
       printf '  --experimental-preview  Select SteamOS Preview for this test image (selfheal only).\n'
       printf '\n  --nvenc-dir DIR  Include experimental 32-bit VAAPI to NVENC bridge.\n'
@@ -196,7 +197,7 @@ if [[ -z "$IMG" ]]; then
   esac
 fi
 [[ -f "$IMG" ]] || die "Image not found: $IMG"
-for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd pacman python3 readelf modinfo flock sha256sum timeout; do
+for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd python3 readelf modinfo flock sha256sum timeout; do
   command -v "$tool" >/dev/null || die "Missing host tool: $tool"
 done
 
@@ -599,10 +600,12 @@ in_chroot "pacman --config $PACCONF -Sy" || warn "pacman -Sy failed - trying the
 in_chroot "pacman --config $PACCONF -S $PACOPTS lib32-libxkbcommon" \
   || die "could not install lib32-libxkbcommon from the image's frozen mirror"
 
-# "Before" = the pristine image's own pacman db (read directly, host-side) -
-# NOT the chroot's, whose db carries installs cached in the overlay upper
-# layer from previous runs and would make the diff come out empty.
-pacman -Q --dbpath "$MNT/usr/lib/holo/pacmandb" | LC_ALL=C sort > "$WORKDIR/pkgs-before.txt"
+# "Before" = the pristine image's own pacman db, read from the rootfs itself -
+# NOT the overlay chroot's, whose db carries installs cached in the overlay
+# upper layer from previous runs and would make the diff come out empty.
+# The image's own pacman reads it, so non-Arch hosts need no pacman.
+chroot "$MNT" pacman -Q --dbpath /usr/lib/holo/pacmandb | LC_ALL=C sort > "$WORKDIR/pkgs-before.txt" \
+  || die "Could not read the recovery image package database"
 in_chroot "pacman -Q" | LC_ALL=C sort > "$WORKDIR/pkgs-after.txt"
 
 # ----------------------------------------------------- compute the payload

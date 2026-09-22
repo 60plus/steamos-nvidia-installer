@@ -6,10 +6,12 @@
 
 This is the default build. Download and unpack Valve's SteamOS 3.8.14 recovery
 image and clone the full repository first; setup instructions follow below.
-Windows users can start with [Build on Windows](Build-on-Windows.md).
+Windows users can start with [Build on Windows](Build-on-Windows.md), and
+Bazzite users with [Build on Bazzite](Build-on-Bazzite.md).
 
 The complete builder prepares the disposable SteamOS environment and builds all
-four artifacts automatically. Run it from the repository root in your Linux VM:
+four artifacts automatically. Run it from the repository root on your Linux build
+host:
 
 ```bash
 sudo bash tools/build-complete.sh /absolute/path/to/recovery.img
@@ -106,10 +108,10 @@ or every hardware configuration.
 
 ## Get the repository
 
-Use [release 0.1.3](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.3). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+Use [release 0.1.4](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.4). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
 
 ```bash
-git clone --branch v0.1.3 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
+git clone --branch v0.1.4 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
 cd steamos-nvidia-installer
 ```
 

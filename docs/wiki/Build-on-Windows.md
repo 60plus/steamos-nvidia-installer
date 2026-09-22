@@ -67,7 +67,7 @@ Compare with `sha256sum ~/steamos-build/input/recovery.img` inside Linux.
 
 ## Check and build
 
-Download the source archive for [release 0.1.3](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.3), or clone tag `v0.1.3`, inside Linux. Keep the full
+Download the source archive for [release 0.1.4](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.4), or clone tag `v0.1.4`, inside Linux. Keep the full
 checkout. From its root run:
 
 ```bash
@@ -152,4 +152,4 @@ output from a failed build. The VM needs no access to your physical USB disk.
   or recursively delete directories containing mounts.
 - SSH refused: check the guest, sshd and the NAT port rule.
 
-Bazzite host support requires a separate test. This guide does not claim it.
+For a Bazzite host, see [Build on Bazzite](Build-on-Bazzite.md).

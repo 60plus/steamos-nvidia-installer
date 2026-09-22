@@ -44,13 +44,13 @@ and VRR, try a direct DisplayPort connection when available. See the [display tr
 ## Quick start
 
 Build the complete installer with the overlay, Remote Play fixes and desktop
-updater included. Start with Linux or a [Linux VM on Windows](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-on-Windows).
+updater included. Start with Linux, [Bazzite](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-on-Bazzite) or a [Linux VM on Windows](https://github.com/60plus/steamos-nvidia-installer/wiki/Build-on-Windows).
 Allow at least 50 GiB free on the Linux work filesystem after downloading the input.
 
 1. Download Valve's **SteamOS 3.8.14 recovery image** through the
    [official recovery page](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227#install)
    and unpack it. The current complete builder requires this baseline.
-2. Download and extract **Source code (zip)** from [release 0.1.3](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.3), or clone tag `v0.1.3`. Open the extracted repository folder and run:
+2. Download and extract **Source code (zip)** from [release 0.1.4](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.4), or clone tag `v0.1.4`. Open the extracted repository folder and run:
 
    ```bash
    sudo bash tools/build-complete.sh /path/to/recovery.img

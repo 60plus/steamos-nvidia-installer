@@ -62,6 +62,7 @@ class Scripts(unittest.TestCase):
         result = shell('bash build-xpadneo.sh --driver 580 --trim-cuda --help')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--xpadneo-version", result.stdout)
+        self.assertIn("Secure Boot off", result.stdout)
 
     def test_xpadneo_default_and_cli_overrides(self):
         parser = INSTALLER.split('[[ "$XPADNEO_VERSION" =~', 1)[0]

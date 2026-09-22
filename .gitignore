@@ -2,6 +2,8 @@
 *.img.*
 *.part
 .nvidia-*/
+.build-storage/
+complete-build-*/
 __pycache__/
 *.pyc
 .test-*/
