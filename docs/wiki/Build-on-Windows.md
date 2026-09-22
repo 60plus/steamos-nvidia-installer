@@ -6,9 +6,51 @@ Build inside an x86_64 Linux virtual machine while keeping Windows as your main
 system. No NVIDIA GPU passthrough is needed for compilation. Test the output on
 real hardware.
 
-The project has built images in an Arch Linux QEMU guest on Windows. The
-VirtualBox setup below is a proposed reproducible route and still needs a full
-clean-install test. Do not read it as completed VirtualBox acceptance.
+The project's own Windows builds ran in an Arch Linux guest under QEMU with
+hardware acceleration. Any hypervisor works as long as the guest runs an ordinary
+Linux distribution kernel. The VirtualBox route below was then followed on
+Windows 11 and produced a complete, verified image. Read
+[Validation](#validation) for what that test covered and what it did not.
+
+## Why a virtual machine, not WSL or Docker
+
+WSL2 and Docker Desktop containers share one kernel supplied by Microsoft, and
+that kernel is built without `CONFIG_UNICODE`. SteamOS keeps its home partition on
+ext4 with the casefold feature, and the builder mounts that partition from the
+recovery image, so the attempt ends with:
+
+```text
+EXT4-fs (loop2): Filesystem with casefold feature cannot be mounted without CONFIG_UNICODE
+```
+
+Making the container privileged does not help, because the limit is in the shared
+kernel and not in the container. Checked on the WSL2 kernel
+6.6.87.2-microsoft-standard-WSL2, which does provide loop devices, OverlayFS and
+Btrfs, but not case-insensitive ext4. A guest running a distribution kernel, such
+as Arch Linux, has that option and works.
+
+The flag is set on Valve's image but no directory on that partition uses it, so
+the obstacle can in principle be removed by clearing it. This page does not do
+that, and the builder is not tested that way here.
+
+This rules out building inside WSL2, not using WSL2 at all. WSL2 supports nested
+virtualization, so it can host a virtual machine whose own kernel does have the
+missing option. The project's builds were produced that way.
+
+## Hardware acceleration
+
+Give the guest hardware acceleration. Which accelerator you get depends on what
+else runs on the machine. VirtualBox uses its own only while no Windows hypervisor
+is active; with WSL2, Docker Desktop, Hyper-V or Memory Integrity enabled it runs
+on the Windows Hypervisor Platform instead, which is slower. QEMU can use that
+platform directly. The work is CPU bound: compiling the driver, the overlay and
+the other artifacts takes a long time, and QEMU's software emulation is far slower
+again. No GPU passthrough is needed, so the NVIDIA card stays with Windows.
+
+If acceleration fails to start, find out why instead of falling back to software
+emulation. Check that virtualization is enabled in firmware, and for a nested
+setup that the outer hypervisor exposes it. A build that quietly ran without
+acceleration looks like a hung build.
 
 ## Set up Linux
 
@@ -142,8 +184,9 @@ output from a failed build. The VM needs no access to your physical USB disk.
 ## Troubleshooting
 
 - Missing tool: install the packages above inside the installed Linux guest.
-- Loop, namespace or mount denied: run with sudo inside a full Linux VM. Docker
-  or WSL alone may lack the required kernel facilities.
+- Loop, namespace or mount denied: run with sudo inside a full Linux VM. WSL and
+  Docker Desktop cannot run this build as documented here; see
+  [Why a virtual machine, not WSL or Docker](#why-a-virtual-machine-not-wsl-or-docker).
 - Shared filesystem rejected: copy the input and work directory to the guest's
   ext4, Btrfs or XFS disk. Do not build on 9p, vboxsf, SMB or a Windows mount.
 - Low space: check `df -h` inside Linux and Windows free space. Enlarging the
@@ -151,5 +194,44 @@ output from a failed build. The VM needs no access to your physical USB disk.
 - Failed build: preserve its log and cache. Do not bypass signature verification
   or recursively delete directories containing mounts.
 - SSH refused: check the guest, sshd and the NAT port rule.
+- The build stops during the package database sync with `Could not resolve host:
+  steamdeck-packages.steamos.cloud`, even though the guest itself resolves names:
+  the builder copies the host's `/etc/resolv.conf` into the build chroot, and on a
+  guest that resolves through systemd-resolved that file can still be the stock one
+  with no `nameserver` line. Point it at the stub resolver and run the build again:
+
+  ```bash
+  sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+  ```
+
+  Then start the build again with a work directory that does not exist yet. The
+  complete builder refuses to reuse the one the failed run left behind, and that
+  directory holds the log worth keeping.
+
+## Validation
+
+These steps were run on Windows 11 with VirtualBox 7.1.10. A new guest was created
+to the specification above: Arch Linux 64-bit, 4 CPU cores, 8 GB RAM, NAT with host
+port 2222 forwarded to guest port 22, and a 100 GB dynamically allocated disk. The
+guest checked out release 0.1.4 from GitHub, and `tools/build-on-windows.ps1` was
+started from PowerShell on Windows exactly as shown above. The host check passed,
+the complete builder compiled all four artifacts and wrote the image and its
+checksum, and no loop device or mount was left behind.
+
+The output was then verified read only: its checksum, the NVIDIA driver and modules
+for the image kernel, addon integrity, the 32-bit and 64-bit NVIDIA libraries, a
+byte comparison of the four compiled artifacts against the build artifacts, and the
+updater configuration. It recorded installer version 0.1.4 and the release commit.
+
+What this test did not cover. The Windows host was in daily use rather than freshly
+installed, and VirtualBox was already present. That host also runs WSL2, so
+VirtualBox used the Windows hypervisor backend instead of its own, which is slower;
+a host without WSL2 normally runs faster than this test did. The guest was
+installed non-interactively instead of working through `archinstall` by hand, it
+downloaded the recovery archive itself instead of receiving it from Windows over
+scp, and it was reached with an SSH key rather than the password prompts described
+above. The image was checked inside the guest, so the retrieval step on this page,
+copying it back to Windows and comparing hashes there, was not exercised either.
+The image was not written to USB or installed on hardware.
 
 For a Bazzite host, see [Build on Bazzite](Build-on-Bazzite.md).

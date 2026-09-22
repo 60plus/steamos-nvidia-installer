@@ -26,8 +26,10 @@ require it. Arch Linux, SteamOS and Bazzite hosts have been used for builds.
 The builder checks for at least 20,000 MiB free in the output location before
 starting. Allow additional space for the downloaded input image, a build cache
 on another filesystem, and any separately compiled artifacts. Repeated builds
-need more space. On Windows, use a Linux VM with working loop devices
-and mounts. Docker or WSL alone should not be assumed to provide these.
+need more space. On Windows, use a Linux virtual machine. WSL2 and Docker Desktop
+cannot run this build as documented, because the kernel Microsoft supplies is
+built without `CONFIG_UNICODE`; see
+[Why a virtual machine, not WSL or Docker](Build-on-Windows.md#why-a-virtual-machine-not-wsl-or-docker).
 
 ## Before erasing a disk
 
