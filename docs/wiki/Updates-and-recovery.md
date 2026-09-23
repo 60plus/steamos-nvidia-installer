@@ -18,6 +18,104 @@ when the update finishes, then check your display, audio, controller and a game.
 OS updates keep the currently pinned driver version. A Steam client update is
 separate from a SteamOS update; check the OS version in system settings.
 
+## Keeping extra drives mounted across updates
+
+SteamOS replaces `/etc` on every update. It keeps a backup and a short list of
+exceptions, and `/etc/fstab` is not on that list, so mount entries added there are
+gone after the next update. Changing the driver has the same effect, because it
+ends in the same Valve migration step. Nothing in this project changes that.
+
+Describe each extra drive as a systemd mount unit instead. Valve's list does keep
+`/etc/systemd/system/*.mount` and the symlink that enables it, so a unit survives
+updates untouched.
+
+### Write the unit
+
+Find the drive's UUID and filesystem:
+
+```bash
+lsblk -o NAME,SIZE,FSTYPE,LABEL,UUID
+```
+
+Choose a mount point under `/var/mnt`. On SteamOS `/mnt` is a symlink to
+`/var/mnt`, and systemd refuses a mount path that passes through a symlink with
+`Mount path /mnt/... is not canonical`. The unit's file name must be the mount
+point path, escaped:
+
+```bash
+systemd-escape --path --suffix=mount /var/mnt/games
+```
+
+That prints `var-mnt-games.mount`. The file belongs to root, so create it with an
+editor started by `sudo`, for example
+`sudo nano /etc/systemd/system/var-mnt-games.mount`, and put your own UUID and
+filesystem type in it:
+
+```ini
+[Unit]
+Description=Extra game drive
+
+[Mount]
+What=/dev/disk/by-uuid/PUT-YOUR-UUID-HERE
+Where=/var/mnt/games
+Type=ext4
+Options=nofail,noatime
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`nofail` keeps a missing or unreadable drive from holding up the boot. systemd
+creates the mount point directory itself. Enable and check it:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now var-mnt-games.mount
+systemctl status var-mnt-games.mount
+```
+
+Options beginning with `x-systemd.`, such as `x-systemd.automount`,
+`x-systemd.device-timeout` and `x-systemd.growfs`, work only in `/etc/fstab` and
+are ignored inside a unit. Their unit equivalents are separate settings; see
+`man systemd.mount`.
+
+### Recover entries already lost
+
+Before it removes your `/etc` changes, SteamOS copies them aside. Only the files
+you had edited are kept, not the whole directory. The quickest place to look is
+the plain copy of the last update:
+
+```bash
+cat /etc/previous/fstab
+```
+
+SteamOS leaves a `README` in `/etc/previous` explaining that directory. Earlier
+updates are kept as archives instead, space permitting, and only the five newest
+are retained:
+
+```bash
+ls -l /var/lib/steamos-atomupd/etc_backup/
+tar -xJf /var/lib/steamos-atomupd/etc_backup/DATE.tar.xz -O etc/fstab
+```
+
+Copy the lines you need into a unit rather than restoring the whole file.
+
+### The other option, and why it is not the first choice
+
+Valve's keep list can be extended with a drop-in. A file such as
+`/etc/atomic-update.conf.d/50-fstab.conf` containing the single line `/etc/fstab`
+makes the whole file survive, and the drop-in survives with it. It works, but
+Valve's own example file warns that a preserved file shadows every later change
+the system makes to it and can prevent updates. For `fstab` it also freezes the
+SteamOS partition entries at their current layout. Prefer a mount unit.
+
+### What was tested
+
+Both methods were measured on SteamOS, once through a driver change and once
+through a normal OS update from 3.8.16 to 3.8.28. In both runs a plain `fstab`
+entry and an unprotected file in `/etc` were lost, while a mount unit stayed
+enabled and mounted and a file protected by a drop-in survived.
+
 ## Update stops near the end
 
 A download error at the end of setup can come from driver repair, even when the
