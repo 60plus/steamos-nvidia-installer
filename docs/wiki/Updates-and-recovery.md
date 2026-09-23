@@ -79,6 +79,79 @@ Options beginning with `x-systemd.`, such as `x-systemd.automount`,
 are ignored inside a unit. Their unit equivalents are separate settings; see
 `man systemd.mount`.
 
+### A share on your network
+
+A share from another machine follows the same rule, with one addition. The unit
+survives the update, but the credentials file it points at is an ordinary file,
+and if you keep it in `/etc` it is removed with everything else. The mount then
+fails with a message that says nothing about an update:
+
+```
+error 2 (No such file or directory) opening credential file /etc/samba/credentials
+```
+
+Keep the credentials outside `/etc`. A file on `/home` is the simplest choice,
+because `/home` is a separate partition that updates do not replace.
+
+```bash
+sudo install -m 600 -o root -g root /dev/null /home/deck/.smb-credentials
+sudo nano /home/deck/.smb-credentials
+```
+
+The password is stored in that file as plain text, so use an account that exists
+only for this share rather than the account you administer the server with:
+
+```
+username=YOUR-USER
+password=YOUR-PASSWORD
+domain=WORKGROUP
+```
+
+Then write the unit. For a share mounted at `/var/mnt/nas` the file is
+`/etc/systemd/system/var-mnt-nas.mount`:
+
+```bash
+sudo nano /etc/systemd/system/var-mnt-nas.mount
+```
+
+```ini
+[Unit]
+Description=Files from the NAS
+After=network-online.target
+Wants=network-online.target
+
+[Mount]
+What=//PUT-YOUR-SERVER-HERE/PUT-YOUR-SHARE-HERE
+Where=/var/mnt/nas
+Type=cifs
+Options=credentials=/home/deck/.smb-credentials,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,nofail
+TimeoutSec=30
+
+[Install]
+WantedBy=multi-user.target
+```
+
+In `What=` the first part is the address of the machine holding the share, for
+example `192.168.0.10`, and the second is the share name that machine offers. If
+you want a different mount point, change `Where=` and rename the file to match,
+using the `systemd-escape` command above.
+
+`After` and `Wants` on `network-online.target` keep the mount from being tried
+before the network is ready. `uid=1000` and `gid=1000` give the `deck` account
+ownership of the mounted files. Enable it as you would a local drive, with your
+own unit name:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now var-mnt-nas.mount
+systemctl status var-mnt-nas.mount
+```
+
+If you would rather keep the credentials in `/etc`, add a keep drop-in naming
+that one file, for example `/etc/atomic-update.conf.d/50-credentials.conf`
+containing the single line `/etc/samba/credentials`. That is a much narrower
+exception than preserving the whole of `fstab`.
+
 ### Recover entries already lost
 
 Before it removes your `/etc` changes, SteamOS copies them aside. Only the files
@@ -115,6 +188,12 @@ Both methods were measured on SteamOS, once through a driver change and once
 through a normal OS update from 3.8.16 to 3.8.28. In both runs a plain `fstab`
 entry and an unprotected file in `/etc` were lost, while a mount unit stayed
 enabled and mounted and a file protected by a drop-in survived.
+
+A third run repeated the measurement through a driver change, this time with a
+CIFS share from another machine on the same network. The unit and a credentials
+file on `/home` survived and the share was mounted again at the next boot with no
+manual step. An unprotected credentials file in `/etc` and a CIFS line in `fstab`
+were lost, while a credentials file in `/etc` named by a keep drop-in survived.
 
 ## Update stops near the end
 
