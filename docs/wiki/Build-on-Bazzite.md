@@ -127,7 +127,9 @@ cd ~/steamos-build/input
 sha256sum -c steamdeck-oobe-repair-20260707.10-3.8.14-nvidia-usbinstall.img.sha256
 ```
 
-Do not flash output from a failed or interrupted build. The work directory
+While the build runs the file ends in `-nvidia-usbinstall.partial.img`, and it is
+renamed only when the build has succeeded, so a leftover partial file is never
+something you can flash. Delete it before building again. The work directory
 (`~/steamos-build/input/complete-build-<date>-<time>`) keeps `build.log`, the
 artifacts and the driver cache. Remove it only after the build has finished and
 `losetup -a | grep steamos-build` prints nothing. The builder's mounts exist only

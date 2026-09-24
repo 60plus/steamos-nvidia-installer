@@ -11,8 +11,17 @@ INSTALLER_HOST = HEREDOC.sub(
     lambda m: m.group(0).split('\n', 1)[0] + '\n' * m.group(0).count('\n'), INSTALLER)
 BUILD_HOST_PART = INSTALLER.split("<<'REPATCH'\n", 1)[0]
 PROBE = (ROOT / 'tools' / 'check-build-host.sh').read_text(encoding='utf-8')
+# lib/pc-support.sh is sourced by the build host, which runs its pc_install_*
+# helpers against the mounted image. Only pc_build_overwrites runs on the
+# device, where pacman exists: the generated repair script is its one caller.
+# Blank that function and keep the line numbers.
+SUPPORT = (ROOT / 'lib' / 'pc-support.sh').read_text(encoding='utf-8')
+DEVICE_ONLY = re.compile(r'^pc_build_overwrites\(\) \{\n.*?^\}\n', re.M | re.S)
+SUPPORT_HOST, EXEMPTIONS = DEVICE_ONLY.subn(
+    lambda m: '\n' * m.group(0).count('\n'), SUPPORT)
 HOST_SCRIPTS = {
     'steamos-nvidia-installer.sh host code': INSTALLER_HOST,
+    'lib/pc-support.sh host code': SUPPORT_HOST,
     **{f'tools/{path.name}': path.read_text(encoding='utf-8')
        for path in sorted((ROOT / 'tools').glob('*.sh'))},
 }
@@ -82,6 +91,14 @@ class BuildHostWithoutPacman(unittest.TestCase):
                     self.assertNotIn('pacman', tools)
         for text in (BUILD_HOST_PART, PROBE):
             self.assertTrue(any('readelf' in tools for tools in tool_lists(text)))
+
+    def test_only_the_device_helper_is_exempt_in_pc_support(self):
+        # The exemption above holds only while pc_build_overwrites stays
+        # device-only. The repair script calls it; no host script may.
+        self.assertEqual(EXEMPTIONS, 1)
+        self.assertIn('pc_build_overwrites "$MERGED"', INSTALLER)
+        for name, text in HOST_SCRIPTS.items():
+            self.assertNotIn('pc_build_overwrites', text, name)
 
     def test_pristine_package_list_uses_the_image_pacman(self):
         self.assertIn('chroot "$MNT" pacman -Q --dbpath /usr/lib/holo/pacmandb', BUILD_HOST_PART)

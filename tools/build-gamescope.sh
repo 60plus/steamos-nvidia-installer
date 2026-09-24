@@ -4,15 +4,10 @@ set -euo pipefail
 root=$(realpath "${1:?Usage: build-gamescope.sh STEAMOS_BUILD_ROOT OUTPUT_DIRECTORY}")
 out=$(realpath -m "${2:?Output directory is required}")
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-[[ $EUID == 0 && $root != / && -f "$root/etc/os-release" && ! -e $out ]]
-grep -q '^ID=steamos' "$root/etc/os-release"
-grep -Eq '^VERSION_ID="?3\.8\.' "$root/etc/os-release"
-mountpoint -q "$root/proc"
-# Dependencies must come from the prepared stable root, never Preview repositories.
-if grep -E '^\[(jupiter|holo|core|extra)-(main|3\.9)\]' "$root/etc/pacman.conf"; then
-  echo 'Use a disposable SteamOS 3.8 stable build root.' >&2
-  exit 1
-fi
+# shellcheck source=build-root-guard.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/build-root-guard.sh"
+[[ ! -e $out ]] || { printf 'Output directory already exists: %s\n' "$out" >&2; exit 1; }
+require_stable_build_root "$root"
 # Recovery images strip headers while retaining the package database entries.
 # Reinstall build libraries; --needed would leave those headers missing.
 chroot "$root" pacman -S --noconfirm gcc glibc linux-api-headers git meson ninja cmake \

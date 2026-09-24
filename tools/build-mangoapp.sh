@@ -4,10 +4,10 @@ set -euo pipefail
 root=$(realpath "${1:?Usage: build-mangoapp.sh STEAMOS_BUILD_ROOT OUTPUT_DIRECTORY}")
 out=$(realpath -m "${2:?Output directory is required}")
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-[[ $EUID == 0 && $root != / && -f "$root/etc/os-release" && ! -e $out ]]
-grep -q '^ID=steamos' "$root/etc/os-release"
-# The root must already have /proc, /dev and DNS available. Never use a running installation.
-mountpoint -q "$root/proc"
+# shellcheck source=build-root-guard.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/build-root-guard.sh"
+[[ ! -e $out ]] || { printf 'Output directory already exists: %s\n' "$out" >&2; exit 1; }
+require_stable_build_root "$root"
 chroot "$root" pacman -S --noconfirm gcc git meson ninja python-mako pkgconf glibc linux-api-headers libx11 libxrandr libxext xorgproto wayland glfw dbus libdrm libglvnd zlib libxcb libxau libxdmcp libxkbcommon vulkan-icd-loader libffi libxrender libxfixes libxinerama libxcursor libxdamage systemd-libs expat libxnvctrl vulkan-headers wayland-protocols glslang
 work=$(chroot "$root" mktemp -d /tmp/mango-build.XXXXXX)
 chroot "$root" git -C "$work" init -q

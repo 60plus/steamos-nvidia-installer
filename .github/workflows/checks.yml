@@ -11,5 +11,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check shell syntax and update safeguards
         run: python3 -m unittest discover -s tests -v
-      - name: Check new support scripts
-        run: shellcheck -S warning steamos-nvidia-installer.sh lib/pc-support.sh scripts/steamos-nvidia-diagnostics scripts/driver-stage.sh tools/build-mangoapp.sh tools/build-gamescope.sh tools/build-nvenc.sh tools/build-remote-play.sh build-xpadneo.sh tools/build-complete.sh tools/check-build-host.sh
+      - name: Check every shell script
+        run: shellcheck -S warning $(git ls-files '*.sh') scripts/steamos-nvidia-diagnostics

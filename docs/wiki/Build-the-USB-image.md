@@ -108,10 +108,10 @@ or every hardware configuration.
 
 ## Get the repository
 
-Use [release 0.1.4](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.4). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+Use [release 0.1.5](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.5). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
 
 ```bash
-git clone --branch v0.1.4 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
+git clone --branch v0.1.5 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
 cd steamos-nvidia-installer
 ```
 
@@ -140,8 +140,15 @@ sudo ./steamos-nvidia-installer.sh /path/to/recovery.img
 ```
 
 The script creates a copy ending in `-nvidia-usbinstall.img`. It keeps the original
-image unchanged and prints the output path when finished. Do not flash an output
-from a failed or interrupted build.
+image unchanged and prints the output path when finished. While the build runs the
+file ends in `-nvidia-usbinstall.partial.img` instead, and it is renamed only when
+the build has succeeded, so a file with the flashable name is always a finished
+build.
+
+An image from an earlier build is left alone until the new one succeeds. That means
+that after a failed build, an `-nvidia-usbinstall.img` sitting next to your input is
+the older image, not the one you just tried to make. Check the time on the file
+before flashing it. The unfinished `.partial.img` is removed by the next run.
 
 The default resolves the current Arch NVIDIA driver. To select a specific build:
 
@@ -173,6 +180,7 @@ removes CUDA, OpenCL and OptiX libraries; omit it if your applications need them
 | `--no-hold-updates` | Use stock updates, which remove the added NVIDIA driver. |
 | `--no-installer` | Produce a patched bootable image without desktop installation shortcuts. |
 | `--skip-sigcheck` | Disable package signature checks during building. Avoid for normal use. |
+| `--preflight` | Run the host checks and stop. Nothing is built and nothing is changed. |
 
 The normal update mode repairs NVIDIA after OS updates. No extra flag is needed.
 The older `build-xpadneo.sh` wrapper explicitly enables xpadneo and forwards other
@@ -277,7 +285,7 @@ Build the decoder and receiver environment helper in a disposable stable SteamOS
 3.8 build root, then pass the artifact directory to the installer:
 
 ```sh
-sudo tools/build-remote-play.sh /path/to/build-root /path/to/remote-play-artifact
+sudo bash tools/build-remote-play.sh /path/to/build-root /path/to/remote-play-artifact
 sudo ./steamos-nvidia-installer.sh --remote-play-dir /path/to/remote-play-artifact /path/to/recovery.img
 ```
 

@@ -63,6 +63,7 @@
 #   --no-installer     Skip step 4 (produce a plain bootable patched OS).
 #   --trim-cuda        Drop CUDA/OpenCL/NVVM/OptiX libs (~350 MB smaller).
 #   --skip-sigcheck    Disable pacman signature checks in the build chroot.
+#   --preflight        Run every host-side check and exit without building.
 #   --workdir DIR      Build dir (~3 GB; default: alongside the output).
 #                      Kept between runs - caches the driver build.
 #
@@ -85,6 +86,7 @@ UPDATE_MODE=selfheal   # selfheal | hold | stock
 ADD_INSTALLER=1
 TRIM_CUDA=0
 SKIP_SIG=0
+PREFLIGHT=0
 DRIVER_SPEC=latest     # latest | <branch or version prefix, e.g. 580>
 WORKDIR=""
 INSTALLER_UPDATE_SOURCE=""
@@ -112,6 +114,7 @@ while [[ $# -gt 0 ]]; do
     --no-xpadneo)      ADD_XPADNEO=0 ;;
     --xpadneo-version) XPADNEO_VERSION="${2:?--xpadneo-version needs an argument}"; ADD_XPADNEO=1; shift ;;
     --skip-sigcheck)   SKIP_SIG=1 ;;
+    --preflight)       PREFLIGHT=1 ;;
     --nvenc-dir) NVENC_DIR="${2:?--nvenc-dir needs an artifact directory}"; shift ;;
     --remote-play-dir) REMOTE_PLAY_DIR="${2:?--remote-play-dir needs an artifact directory}"; shift ;;
     --gamescope-dir) GAMESCOPE_DIR="${2:?--gamescope-dir needs an artifact directory}"; shift ;;
@@ -197,19 +200,40 @@ if [[ -z "$IMG" ]]; then
   esac
 fi
 [[ -f "$IMG" ]] || die "Image not found: $IMG"
-for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd python3 readelf modinfo flock sha256sum timeout; do
+for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd python3 readelf modinfo flock sha256sum timeout udevadm; do
   command -v "$tool" >/dev/null || die "Missing host tool: $tool"
 done
 
 IMG="$(realpath "$IMG")"
 OUT="${IMG%.img}-nvidia-usbinstall.img"
+# Build under a name nobody will flash. The final name appears only after a
+# successful run, so an interrupted build leaves nothing that looks finished.
+PARTIAL="${OUT%.img}.partial.img"
 # match the FILENAME only - the containing dir may itself be called
 # "steamos-nvidia-installer" (the repo clone), which must not trip this guard
 [[ "$(basename "$IMG")" == *-nvidia*.img ]] && die "Input looks like an already-patched image - start from the clean repair image."
 exec 9>/run/steamos-nvidia-build.lock
 flock -n 9 || die "Another image build is running"
 pc_require_space "$(dirname "$OUT")" 20000 || die "Free space check failed"
-[[ -e "$OUT" ]] && { warn "Removing previous output $OUT"; rm -f "$OUT"; }
+
+if [[ $PREFLIGHT == 1 ]]; then
+  # Everything above is read-only. Stop here, before the previous output is
+  # touched and before the 8 GB copy, so a complete build learns in seconds
+  # instead of after an hour of compiling.
+  timeout 15 udevadm control --ping >/dev/null 2>&1 \
+    || die "udev is not answering; the build needs it to keep desktop automounts off the loop device"
+  # Both Arch hosts matter: the archive serves the pinned packages, and the
+  # package search resolves anything pinned as "latest", which always includes
+  # the companion egl-wayland2.
+  pc_curl -fsSIL "https://archive.archlinux.org/packages/n/nvidia-utils/" -o /dev/null \
+    || die "archive.archlinux.org is not reachable; the pinned driver packages cannot be fetched"
+  pc_curl -fsSL "https://archlinux.org/packages/search/json/?name=nvidia-utils" -o /dev/null \
+    || die "archlinux.org is not reachable; a driver version cannot be resolved"
+  log "Preflight passed for $IMG. Nothing was built and nothing was changed."
+  exit 0
+fi
+[[ -e "$PARTIAL" ]] && { warn "Removing an unfinished output from an earlier run: $PARTIAL"; rm -f "$PARTIAL"; }
+[[ -e "$OUT" ]] && warn "A previous output exists. It is replaced only if this build succeeds: $OUT"
 
 [[ -n "$WORKDIR" ]] || WORKDIR="$(dirname "$OUT")/.nvidia-usb-work"
 MNT="$WORKDIR/mnt"          # rootfs mount
@@ -255,17 +279,30 @@ for m in "$MERGED" "$EFIMNT" "$HOMEMNT" "$MNT"; do
   fi
 done
 
+# A run killed mid-transaction leaves pacman's lock behind in the cached
+# overlay, and the next run then dies with "unable to lock database". The build
+# lock above and the PID namespace rule out a pacman that is still alive, so the
+# lock is stale. Throw the whole overlay away rather than the lock file alone: a
+# transaction stopped part way through can also have left half extracted files
+# that no package owns. The package download cache sits outside the overlay and
+# is kept.
+if [[ -e "$UPPER/usr/lib/holo/pacmandb/db.lck" ]]; then
+  warn "A previous package transaction was interrupted - discarding the build overlay, the driver is built again"
+  rm -rf "${UPPER:?}" "${OVLWORK:?}"
+  mkdir -p "$UPPER" "$OVLWORK"
+fi
+
 # keep udisks/desktop automounters away from loop partitions during the run
 mkdir -p /run/udev/rules.d
 echo 'SUBSYSTEM=="block", KERNEL=="loop*", ENV{UDISKS_IGNORE}="1"' > "$UDEV_RULE"
 udevadm control --reload
 
 # ------------------------------------------------------------- copy image
-log "Copying image → $OUT (~8 GB)"
-cp --reflink=auto "$IMG" "$OUT"
+log "Copying image → $PARTIAL (~8 GB)"
+cp --reflink=auto "$IMG" "$PARTIAL"
 
 # ------------------------------------------------------------- loop mount
-LOOPDEV="$(losetup -f --show -P "$OUT")"
+LOOPDEV="$(losetup -f --show -P "$PARTIAL")"
 log "Loop device: $LOOPDEV"
 
 ROOTPART="" EFIPART="" HOMEPART=""
@@ -511,8 +548,27 @@ mount -t overlay overlay \
 mount -t proc proc "$MERGED/proc"
 mount --rbind /sys "$MERGED/sys";  mount --make-rslave "$MERGED/sys"
 mount --rbind /dev "$MERGED/dev";  mount --make-rslave "$MERGED/dev"
-rm -f "$MERGED/etc/resolv.conf"          # whiteout in upper only
-cp -L /etc/resolv.conf "$MERGED/etc/resolv.conf"
+# Give the build chroot a resolver that really has a nameserver. A host that
+# resolves through systemd-resolved's NSS module leaves /etc/resolv.conf as the
+# stock comment-only file. The chroot has no such module, so the build would
+# fail much later inside pacman with "Could not resolve host". The uplink file
+# is tried before the stub file, because the stub listener can be turned off.
+set_chroot_resolver() {
+  local root="$1" candidate
+  shift
+  for candidate in "$@"; do
+    [[ -r "$candidate" ]] || continue
+    grep -Eq '^[[:space:]]*nameserver[[:space:]]+[^[:space:]#]' "$candidate" || continue
+    rm -f -- "$root/etc/resolv.conf"          # whiteout in upper only
+    cp -L -- "$candidate" "$root/etc/resolv.conf" || return 1
+    printf 'Build chroot resolver: %s\n' "$candidate" >&2
+    return 0
+  done
+  return 1
+}
+set_chroot_resolver "$MERGED" \
+  /etc/resolv.conf /run/systemd/resolve/resolv.conf /run/systemd/resolve/stub-resolv.conf \
+  || die "No resolv.conf on this build host has a nameserver line, so the build chroot cannot resolve names. Point /etc/resolv.conf at /run/systemd/resolve/stub-resolv.conf, or write a nameserver line into it, then start the build again."
 
 PACOPTS="--noconfirm --needed"
 PACCONF="/etc/pacman.conf"
@@ -1336,6 +1392,9 @@ btrfs property set "$MNT" ro true
 log "Unmounting"
 cleanup
 trap - EXIT
+
+# Same directory, so this is a rename. The flashable name exists only now.
+mv -f "$PARTIAL" "$OUT" || die "Could not put the finished image in place: $OUT"
 
 log "DONE - $OUT"
 cat <<EOF

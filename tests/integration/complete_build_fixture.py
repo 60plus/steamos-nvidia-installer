@@ -19,8 +19,12 @@ echo built > "$1/compile-marker"
 mkdir "$2"
 echo {name} > "$2/artifact"
 ''')
-script(repo/'steamos-nvidia-installer.sh','''image="${@: -1}"
-printf output > "${image%.img}-nvidia-usbinstall.img"
+script(repo/'steamos-nvidia-installer.sh','''for argument in "$@"; do [[ $argument != --preflight ]] || exit 0; done
+image="${@: -1}"
+partial="${image%.img}-nvidia-usbinstall.partial.img"
+printf output > "$partial"
+[[ ${FAIL_INSTALLER:-} != 1 ]] || exit 24
+mv -f "$partial" "${image%.img}-nvidia-usbinstall.img"
 ''')
 image=base/'recovery.img';subprocess.run(['truncate','-s','384M',image],check=True)
 subprocess.run(['sfdisk',str(image)],input='label: gpt\nstart=2048, name="rootfs-A"\n',text=True,check=True,stdout=subprocess.DEVNULL)
@@ -35,6 +39,19 @@ finally:
  subprocess.run(['umount',mnt],check=True);subprocess.run(['losetup','-d',loop],check=True)
 sha=lambda:hashlib.sha256(image.read_bytes()).hexdigest()
 before=sha();env=dict(os.environ,PATH=str(fake)+':'+os.environ['PATH'])
+final=base/'recovery-nvidia-usbinstall.img';partial=base/'recovery-nvidia-usbinstall.partial.img'
+# An installer that dies after creating its working file must leave nothing
+# that looks flashable, and the next run must refuse until it is cleared.
+env['FAIL_COMPONENT']='';env['FAIL_INSTALLER']='1'
+r=subprocess.run(['bash',str(repo/'tools/build-complete.sh'),'--workdir',str(base/'installer-failed'),str(image)],env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+(base/'installer-failure.log').write_text(r.stdout)
+assert r.returncode!=0,r.stdout
+assert 'Checking installer preconditions' in r.stdout,'preflight never ran'
+assert partial.exists(),'the unfinished file should be kept for inspection'
+assert not final.exists(),'a failed build produced a flashable name'
+r=subprocess.run(['bash',str(repo/'tools/build-complete.sh'),'--workdir',str(base/'blocked'),str(image)],env=env,capture_output=True,text=True)
+assert r.returncode!=0 and 'unfinished image' in r.stderr,r.stderr
+partial.unlink();del env['FAIL_INSTALLER']
 for fail in ['gamescope','']:
  env['FAIL_COMPONENT']=fail
  work=base/('failed' if fail else 'success')
@@ -46,7 +63,9 @@ for fail in ['gamescope','']:
  mounts=subprocess.check_output(['findmnt','-rn','-o','TARGET'],text=True)
  assert not any(x.startswith(str(work)) for x in mounts.splitlines()),mounts
  assert not subprocess.check_output(['losetup','-j',str(image)],text=True)
- if fail:assert not (base/'recovery-nvidia-usbinstall.img').exists()
+ assert 'Checking installer preconditions' in r.stdout,'preflight never ran'
+ assert not partial.exists(),'an unfinished file was left behind'
+ if fail:assert not final.exists()
  else:assert (base/'recovery-nvidia-usbinstall.img.sha256').exists()
 r=subprocess.run(['bash',str(repo/'tools/build-complete.sh'),str(image)],env=env,capture_output=True,text=True)
 assert r.returncode!=0 and 'Output already exists' in r.stderr

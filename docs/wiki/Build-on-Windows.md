@@ -109,7 +109,7 @@ Compare with `sha256sum ~/steamos-build/input/recovery.img` inside Linux.
 
 ## Check and build
 
-Download the source archive for [release 0.1.4](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.4), or clone tag `v0.1.4`, inside Linux. Keep the full
+Download the source archive for [release 0.1.5](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.5), or clone tag `v0.1.5`, inside Linux. Keep the full
 checkout. From its root run:
 
 ```bash
@@ -194,19 +194,20 @@ output from a failed build. The VM needs no access to your physical USB disk.
 - Failed build: preserve its log and cache. Do not bypass signature verification
   or recursively delete directories containing mounts.
 - SSH refused: check the guest, sshd and the NAT port rule.
-- The build stops during the package database sync with `Could not resolve host:
-  steamdeck-packages.steamos.cloud`, even though the guest itself resolves names:
-  the builder copies the host's `/etc/resolv.conf` into the build chroot, and on a
-  guest that resolves through systemd-resolved that file can still be the stock one
-  with no `nameserver` line. Point it at the stub resolver and run the build again:
+- `No resolv.conf on this build host has a nameserver line`: the build chroot needs
+  a resolver file that names a server. A guest that resolves through
+  systemd-resolved can leave `/etc/resolv.conf` as the stock file with no
+  `nameserver` line in it, and the builder now checks the systemd-resolved files as
+  well before it gives up. If all of them are unusable, point the file at the stub
+  resolver and start again:
 
   ```bash
   sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
   ```
 
-  Then start the build again with a work directory that does not exist yet. The
-  complete builder refuses to reuse the one the failed run left behind, and that
-  directory holds the log worth keeping.
+  Start the build again with a work directory that does not exist yet. The complete
+  builder refuses to reuse the one the failed run left behind, and that directory
+  holds the log worth keeping.
 
 ## Validation
 

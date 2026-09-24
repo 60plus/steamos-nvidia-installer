@@ -39,7 +39,9 @@ source=$(realpath -e -- "$source")
 [[ -f $image && $image == *.img && $(basename "$image") != *-nvidia*.img ]] || die 'Use the original unpacked recovery .img.'
 [[ -r $source && -f $source ]] || die 'Updater source configuration is missing.'
 output="${image%.img}-nvidia-usbinstall.img"
+partial="${output%.img}.partial.img"
 [[ ! -e $output && ! -e $output.sha256 ]] || die "Output already exists: $output. Move it aside before starting."
+[[ ! -e $partial ]] || die "An unfinished image from an earlier build is in the way: $partial. It is not flashable. Delete it before starting."
 [[ -n $work ]] || work="$(dirname "$image")/complete-build-$(date +%Y%m%d-%H%M%S)"
 work=$(realpath -m -- "$work")
 [[ ! -e $work && -d $(dirname "$work") ]] || die 'Work directory must be new and its parent must exist.'
@@ -61,6 +63,12 @@ import json,sys
 with open(sys.argv[1]) as f: value=json.load(f)
 assert isinstance(value,dict) and value.get('public_key') and value.get('release_api'), 'Invalid updater source'
 PY
+# The installer's own preconditions, before hours of compiling. The artifact
+# directories do not exist yet, so they are deliberately not passed.
+printf 'Checking installer preconditions before compiling.\n'
+bash "$repo/steamos-nvidia-installer.sh" --preflight \
+  --driver "$driver" "${trim[@]}" \
+  --installer-update-source "$source" "$image"
 mkdir -- "$work"
 exec > >(tee "$work/build.log") 2>&1
 printf 'Work directory: %s\nInput: %s\n' "$work" "$image"
@@ -122,8 +130,27 @@ mount --rbind /dev "$root/dev"
 mount --make-rslave "$root/dev"
 mount --rbind /sys "$root/sys"
 mount --make-rslave "$root/sys"
-rm -f -- "$root/etc/resolv.conf"
-cp -L /etc/resolv.conf "$root/etc/resolv.conf"
+# Give the build chroot a resolver that really has a nameserver. A host that
+# resolves through systemd-resolved's NSS module leaves /etc/resolv.conf as the
+# stock comment-only file. The chroot has no such module, so the build would
+# fail much later inside pacman with "Could not resolve host". The uplink file
+# is tried before the stub file, because the stub listener can be turned off.
+set_chroot_resolver() {
+  local root="$1" candidate
+  shift
+  for candidate in "$@"; do
+    [[ -r "$candidate" ]] || continue
+    grep -Eq '^[[:space:]]*nameserver[[:space:]]+[^[:space:]#]' "$candidate" || continue
+    rm -f -- "$root/etc/resolv.conf"          # whiteout in upper only
+    cp -L -- "$candidate" "$root/etc/resolv.conf" || return 1
+    printf 'Build chroot resolver: %s\n' "$candidate" >&2
+    return 0
+  done
+  return 1
+}
+set_chroot_resolver "$root" \
+  /etc/resolv.conf /run/systemd/resolve/resolv.conf /run/systemd/resolve/stub-resolv.conf \
+  || die 'No resolv.conf on this build host has a nameserver line, so the build chroot cannot resolve names. Point /etc/resolv.conf at /run/systemd/resolve/stub-resolv.conf, or write a nameserver line into it, then start the build again.'
 # Never disable package signatures. Initialize a private keyring in the overlay.
 chroot "$root" pacman-key --init
 chroot "$root" pacman-key --populate

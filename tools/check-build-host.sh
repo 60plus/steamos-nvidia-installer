@@ -11,7 +11,7 @@ if [[ ${1:-} == --help || $# != 2 ]]; then
 fi
 [[ $EUID == 0 ]] || die "Run with sudo on the Linux build host."
 [[ $(uname -m) == x86_64 ]] || die "An x86_64 Linux build environment is required."
-for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd python3 readelf modinfo flock sha256sum timeout unshare findmnt mkfs.btrfs mount umount truncate realpath df mktemp; do
+for tool in losetup blkid btrfs rsync curl depmod sed awk tar zstd python3 readelf modinfo flock sha256sum timeout udevadm unshare findmnt mkfs.btrfs mount umount truncate realpath df mktemp; do
   command -v "$tool" >/dev/null || die "Missing tool: $tool. Install it with the host's package manager; see Build machine in the manual's Before you start page."
 done
 image=$(realpath -e -- "$1")

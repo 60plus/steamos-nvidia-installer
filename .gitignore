@@ -4,6 +4,7 @@
 .nvidia-*/
 .build-storage/
 complete-build-*/
+.host-probe.*/
 __pycache__/
 *.pyc
 .test-*/

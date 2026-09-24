@@ -1,4 +1,6 @@
 #!/bin/bash
+# Set here for the cleanup function sourced from the installer below.
+# shellcheck disable=SC2034
 set -euo pipefail
 cd "$(dirname "$0")/.."
 work=$(mktemp -d /tmp/ab-cleanup.XXXXXX)

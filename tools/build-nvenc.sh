@@ -3,11 +3,10 @@
 set -euo pipefail
 root=$(realpath "${1:?Usage: build-nvenc.sh BUILD_ROOT OUTPUT}")
 out=$(realpath -m "${2:?Output directory required}")
-[[ $EUID == 0 && $root != / && ! -e $out ]]
-grep -q '^ID=steamos' "$root/etc/os-release"
-grep -Eq '^VERSION_ID="?3\.8\.' "$root/etc/os-release"
-mountpoint -q "$root/proc"
-if grep -E '^\[(jupiter|holo|core|extra)-(main|3\.9)\]' "$root/etc/pacman.conf"; then exit 1; fi
+# shellcheck source=build-root-guard.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/build-root-guard.sh"
+[[ ! -e $out ]] || { printf 'Output directory already exists: %s\n' "$out" >&2; exit 1; }
+require_stable_build_root "$root"
 chroot "$root" pacman -S --noconfirm gcc glibc meson ninja pkgconf libva libdrm libglvnd ffnvcodec-headers lib32-glibc lib32-gcc-libs lib32-libglvnd lib32-libva lib32-libdrm
 commit=3a58095f1833c997fd4f0a73ce3fa0300cdc20fc
 work=$(chroot "$root" mktemp -d /tmp/nvenc-build.XXXXXX)
