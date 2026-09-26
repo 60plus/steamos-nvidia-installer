@@ -21,7 +21,9 @@ class NvencInstallation(unittest.TestCase):
             code='source lib/pc-support.sh\nchroot() { return 0; }\npc_install_nvenc "$1"'
             run=lambda:subprocess.run(['bash','-c',code,'test',str(root)],cwd=ROOT,capture_output=True,text=True)
             self.assertEqual(run().returncode,0)
-            outputs=[root/p for p in ['usr/lib32/dri/nvidia_drv_video.so','usr/lib/systemd/user/steamos-nvidia-nvenc.service','usr/lib/systemd/user/steam-launcher.service.d/45-nvidia-nvenc.conf']]
+            outputs=[root/p for p in ['usr/lib32/dri/nvidia_drv_video.so','usr/lib/systemd/user/steamos-nvidia-nvenc.service','usr/lib/systemd/user/steam-launcher.service.d/45-nvidia-nvenc.conf','usr/lib/systemd/user/app-steam@.service.d/45-nvidia-nvenc.conf']]
+            self.assertEqual(outputs[2].read_text(),outputs[3].read_text(),'both launchers must start the helper')
+            self.assertIn('UnsetEnvironment=LIBVA_DRIVER_NAME',outputs[3].read_text())
             saved=[p.read_bytes() for p in outputs]
             for p in outputs:p.unlink()
             self.assertEqual(run().returncode,0)

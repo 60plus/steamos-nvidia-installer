@@ -50,9 +50,13 @@ class ReceiverInstallation(unittest.TestCase):
             code='source lib/pc-support.sh\nchroot() { return 0; }\npc_install_remote_play "$1"'
             run=lambda:subprocess.run(['bash','-c',code,'test',str(root)],cwd=ROOT,capture_output=True,text=True)
             self.assertEqual(run().returncode,0)
-            drop=root/'usr/lib/systemd/user/steam-launcher.service.d/40-nvidia-remote-play.conf'
-            saved=drop.read_bytes();drop.unlink()
-            self.assertEqual(run().returncode,0);self.assertEqual(drop.read_bytes(),saved)
+            drops=[root/'usr/lib/systemd/user/steam-launcher.service.d/40-nvidia-remote-play.conf',
+                   root/'usr/lib/systemd/user/app-steam@.service.d/40-nvidia-remote-play.conf']
+            saved=[d.read_bytes() for d in drops]
+            self.assertEqual(saved[0],saved[1],'both launchers must receive the same environment')
+            for d in drops:d.unlink()
+            self.assertEqual(run().returncode,0)
+            self.assertEqual([d.read_bytes() for d in drops],saved)
             (base/names[0]).write_bytes(b'corrupt')
             self.assertNotEqual(run().returncode,0)
 

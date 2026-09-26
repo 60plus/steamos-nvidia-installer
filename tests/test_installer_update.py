@@ -19,6 +19,43 @@ def manifest():
                 bundle_sha256='0'*64, files={name: m.digest(b'test') for name in m.FILES})
 
 
+class TheConfirmationWindowStaysOnTheScreen(unittest.TestCase):
+    """Zenity grows a dialog to fit its text and ignores --height.
+
+    Measured on 2026-09-26 with the 0.1.6 release notes, 94 lines and 6343
+    characters: the confirmation window grew past the bottom of a 1440p screen
+    and neither Continue nor Cancel could be clicked, so the update could not be
+    answered at all. The window now shows a bounded extract and says how many
+    lines were left out.
+    """
+
+    spec = importlib.util.spec_from_file_location(
+        'installer_update_ui', Path(__file__).parents[1] / 'scripts/installer-update-ui.py')
+    ui = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ui)
+
+    def test_short_notes_are_shown_whole(self):
+        notes = 'One line.' + chr(10) + 'Another line.'
+        self.assertEqual(notes, self.ui.summarise(notes))
+
+    def test_long_notes_are_bounded_and_say_what_is_missing(self):
+        notes = (chr(10)).join('Line %d of the release notes.' % n for n in range(1, 95))
+        short = self.ui.summarise(notes)
+        self.assertLessEqual(len(short.splitlines()), 17)
+        self.assertLess(len(short), 1100)
+        self.assertIn('more lines', short)
+        self.assertIn('Line 1 of the release notes.', short)
+        self.assertNotIn('Line 94 of the release notes.', short)
+
+    def test_the_real_release_notes_fit(self):
+        notes = (Path(__file__).parents[1] / '.verify-work/release-notes-016.md')
+        if not notes.exists():
+            self.skipTest('release notes are workshop only')
+        short = self.ui.summarise(notes.read_text(encoding='utf-8'))
+        self.assertLessEqual(len(short.splitlines()), 17)
+        self.assertLess(len(short), 1100)
+
+
 class SteamosCompatibilityIsRecordedNotEnforced(unittest.TestCase):
     """A declared version list must not block the releases people actually run.
 
@@ -161,6 +198,23 @@ class InstallerUpdate(unittest.TestCase):
             value=m.fetch('latest',Path(tmp))
             self.assertEqual(value['version'],'0.1.0-dev.1')
             self.assertTrue(all(u.startswith(cfg['download_origin']) for u in calls[1:]))
+            self.assertEqual(value['page'],
+                             'https://downloads.example.com/o/r/releases/tag/v0.1.0-dev.1')
+
+    def test_the_release_page_is_named_and_pinned_to_the_configured_origin(self):
+        # The window tells the reader the notes are cut short, so it has to say
+        # where the rest is. The address must not come from the server.
+        github=dict(release_api='https://api.github.com/repos/60plus/steamos-nvidia-installer/releases/',
+                    download_origin='https://github.com')
+        gitea=dict(release_api='https://git.example.com/api/v1/repos/o/r/releases/',
+                   download_origin='https://git.example.com')
+        self.assertEqual(m.release_page(github,'v0.1.7'),
+                         'https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.7')
+        self.assertEqual(m.release_page(gitea,'v0.1.7'),
+                         'https://git.example.com/o/r/releases/tag/v0.1.7')
+        hostile=dict(release_api='https://api.example.com/repos/o/r/releases/',
+                     download_origin='https://downloads.example.com')
+        self.assertTrue(m.release_page(hostile,'v1').startswith('https://downloads.example.com/'))
 
     def test_stable_source_rejects_prerelease_before_asset_download(self):
         cfg=dict(name='stable',release_api='https://api.example.com/repos/o/r/releases/',allow_prerelease=False)

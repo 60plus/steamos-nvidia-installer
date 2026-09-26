@@ -346,10 +346,10 @@ pc_write_addon_manifest() {
     (cd "$root" && sha256sum usr/lib/steamos-nvidia/notification-renderer.py usr/lib/systemd/user/steam-launcher.service.d/25-nvidia-notifications.conf usr/lib/systemd/user/steamos-nvidia-notifications.service) >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
   fi
   if [[ -d "$root/usr/lib/steamos-nvidia/nvenc" ]]; then
-    (cd "$root" && find usr/lib/steamos-nvidia/nvenc -type f -print0 | sort -z | xargs -0 sha256sum && sha256sum usr/lib32/dri/nvidia_drv_video.so usr/lib/systemd/user/steamos-nvidia-nvenc.service usr/lib/systemd/user/steam-launcher.service.d/45-nvidia-nvenc.conf) >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
+    (cd "$root" && find usr/lib/steamos-nvidia/nvenc -type f -print0 | sort -z | xargs -0 sha256sum && sha256sum usr/lib32/dri/nvidia_drv_video.so usr/lib/systemd/user/steamos-nvidia-nvenc.service usr/lib/systemd/user/steam-launcher.service.d/45-nvidia-nvenc.conf 'usr/lib/systemd/user/app-steam@.service.d/45-nvidia-nvenc.conf') >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
   fi
   if [[ -d "$root/usr/lib/steamos-nvidia/remote-play" ]]; then
-    (cd "$root" && find usr/lib/steamos-nvidia/remote-play -type f -print0 | sort -z | xargs -0 sha256sum && sha256sum usr/lib/steamos-nvidia/remote-play-env.py usr/lib/systemd/user/steam-launcher.service.d/40-nvidia-remote-play.conf) >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
+    (cd "$root" && find usr/lib/steamos-nvidia/remote-play -type f -print0 | sort -z | xargs -0 sha256sum && sha256sum usr/lib/steamos-nvidia/remote-play-env.py usr/lib/systemd/user/steam-launcher.service.d/40-nvidia-remote-play.conf 'usr/lib/systemd/user/app-steam@.service.d/40-nvidia-remote-play.conf') >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
   fi
   if [[ -d "$root/usr/lib/steamos-nvidia/gamescope" ]]; then
     (cd "$root" && find usr/lib/steamos-nvidia/gamescope -type f ! -path usr/lib/steamos-nvidia/gamescope/status.txt -print0 | sort -z | xargs -0 sha256sum) >> "$root/usr/lib/steamos-nvidia/addons.sha256" || return 1
@@ -864,12 +864,21 @@ REMOTE_VERIFY
   [[ -f "$root/usr/lib/steamos-nvidia/remote-play-env.py" ]] || return 1
   chroot "$root" /usr/lib/ld-linux-x86-64.so.2 --list /usr/lib/steamos-nvidia/remote-play/dri/nvidia_drv_video.so >/dev/null || return 1
   chroot "$root" /usr/lib/ld-linux-x86-64.so.2 --list /usr/lib/steamos-nvidia/remote-play/lib/receiver-env.so >/dev/null || return 1
-  mkdir -p "$root/usr/lib/systemd/user/steam-launcher.service.d"
-  cat > "$root/usr/lib/systemd/user/steam-launcher.service.d/40-nvidia-remote-play.conf" <<'REMOTE_SERVICE'
+  # Game Mode starts Steam as steam-launcher.service. The KDE desktop starts it
+  # as an instance of app-steam@.service, whether from autostart or from the
+  # launcher, so a template drop-in reaches every instance. Measured on
+  # 2026-09-26: with only the Game Mode unit covered, the desktop receiver found
+  # no VA-API driver for the NVIDIA device, spun on the lookup and died on a null
+  # pointer, which on screen looked like the stream never starting.
+  local unit
+  for unit in steam-launcher.service app-steam@.service; do
+    mkdir -p "$root/usr/lib/systemd/user/$unit.d"
+    cat > "$root/usr/lib/systemd/user/$unit.d/40-nvidia-remote-play.conf" <<'REMOTE_SERVICE'
 [Service]
 EnvironmentFile=-%t/steamos-nvidia-remote-play.env
 ExecStartPre=/usr/bin/python3 /usr/lib/steamos-nvidia/remote-play-env.py
 REMOTE_SERVICE
+  done
 }
 
 # Optional sending-side bridge; the private 64-bit receiver is not changed.
@@ -908,9 +917,21 @@ RestartSec=2
 UMask=0077
 NoNewPrivileges=yes
 NVENC_UNIT
-  cat > "$root/usr/lib/systemd/user/steam-launcher.service.d/45-nvidia-nvenc.conf" <<'NVENC_STEAM'
+  # The desktop session exports LIBVA_DRIVER_NAME=radeonsi, from Valve's
+  # /etc/profile.d/libva.sh written for the Steam Deck's AMD part. Steam's encoder
+  # then opens radeonsi_drv_video.so, fails and falls back to libx264 on the CPU.
+  # Game Mode never has the variable set, so removing it for Steam restores the
+  # behaviour this project measured there. Measured on 2026-09-26.
+  local unit
+  for unit in steam-launcher.service app-steam@.service; do
+    mkdir -p "$root/usr/lib/systemd/user/$unit.d"
+    cat > "$root/usr/lib/systemd/user/$unit.d/45-nvidia-nvenc.conf" <<'NVENC_STEAM'
 [Unit]
 Wants=steamos-nvidia-nvenc.service
 After=steamos-nvidia-nvenc.service
+
+[Service]
+UnsetEnvironment=LIBVA_DRIVER_NAME
 NVENC_STEAM
+  done
 }

@@ -50,6 +50,12 @@ ordinary teardown wakes all waiters at once, and bounds both waits in
 logs which surface it gave up on and continues. The paths no drain can reach
 therefore degrade to one stale frame instead of a process that cannot exit.
 
-This trades a frame that may be stale for a process that stays killable. It has
-not been measured on hardware yet, and it does not address why the link reset the
+This trades a frame that may be stale for a process that stays killable. It was
+then measured on hardware: the failure was reproduced three times before the
+change and did not return after it, across a hand installation, a full image
+install, and a move to SteamOS 3.9.2 Preview on a kernel from another series and
+back. No `still resolving` line has been logged in normal use, so the bound is not
+being reached on a healthy path. It still does not address why the link reset the
 decoder more than once in one session.
+
+Reported upstream on 2026-09-26 as elFarto/nvidia-vaapi-driver#468.

@@ -14,6 +14,28 @@ TITLE = 'SteamOS NVIDIA Installer Update'
 TOOL = '/usr/bin/steamos-nvidia-installer-update'
 
 
+def summarise(notes, lines=14, chars=900):
+    """Bound what the confirmation window shows of the release notes.
+
+    Zenity grows a dialog to fit its text and ignores --height, so the 0.1.6
+    notes pushed Continue and Cancel off the bottom of a 1440p screen and the
+    window could not be answered at all. Measured on 2026-09-26. Keep the first
+    lines, say how many are left, and point at the release page for the rest.
+    """
+    body = notes.strip().splitlines()
+    kept, used = [], 0
+    for line in body:
+        if len(kept) >= lines or used + len(line) + 1 > chars:
+            break
+        kept.append(line)
+        used += len(line) + 1
+    if len(kept) == len(body):
+        return notes.strip()
+    remaining = len(body) - len(kept)
+    return ('\n'.join(kept).rstrip() + '\n\n[' + str(remaining) +
+            ' more lines. The full notes are on the release page.]')
+
+
 def dialog(kind, text, *options):
     command = ['zenity', kind, '--title', TITLE, '--width', '860', '--height', '440',
                '--text', html.escape(text), *options]
@@ -78,7 +100,9 @@ def main():
             dialog('--info', 'Installer tools are up to date: ' + release['version'])
             return 0
         text = ('Installed tools: ' + release['installed'] + '\nAvailable: ' + release['version'] +
-                '\nSource: ' + release['source'] + '\n\n' + release['notes'] +
+                '\nSource: ' + release['source'] +
+                ('\nRelease page: ' + release['page'] if release.get('page') else '') +
+                '\n\n' + summarise(release['notes']) +
                 '\n\nPreparation replaces the inactive OS slot and needs about 17 GiB free on /home. '
                 'Finish pending OS updates and reboot first. The operation may look paused; please wait.')
         action, tag, sha = 'install', release['tag'], release['manifest_sha256']

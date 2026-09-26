@@ -460,3 +460,93 @@ to YUV and back. Do not compensate with monitor calibration, and do not expect a
 different image build to change it. If you report it, include both directions,
 the capture method and encoder from the host's `streaming_log.txt`, and the
 levels you measure rather than a description.
+
+## Remote Play shows no picture in Desktop Mode but works in Game Mode
+
+Receiving a stream with hardware decoding fails on the KDE desktop and is correct
+in Game Mode. Measured on 2026-09-26. The fault is in Steam's client, not in
+anything this project installs.
+
+The client records which decoder it chose, in the host's `streaming_log.txt`:
+
+| | reported decoder |
+| --- | --- |
+| Game Mode | `CLIENT: VAAPI Vulkan hardware decoding` |
+| Desktop Mode | `CLIENT: VAAPI DRM hardware decoding` |
+
+In Game Mode the client runs under Gamescope, loads `libvulkan.so` and the
+Gamescope Vulkan WSI layer, and takes its Vulkan path: no dropped frames, 249
+Mbit/s negotiated. On the desktop there is no Gamescope, no WSI layer and no
+Vulkan loaded in the client at all, and the DRM path it falls back to costs 153 ms
+per frame for 6.1 frames per second. Instead of decoding, the client builds and
+destroys its whole decoder three to four times a second, which the host reports as
+a decode time of 58 to 74 ms, and the sender throttles to 2.5 Mbit/s. A reported
+packet loss of over 90 percent is a consequence of that throttling, not its cause:
+the network step measures under 1.2 ms throughout and the kernel drops nothing.
+
+**Switch hardware decoding off** in the client's streaming settings, or receive in
+Game Mode. With software decoding the same machine measures 1.66 ms per frame and
+43.4 frames per second, which is enough for a 1440p stream.
+
+The receiver driver is not the cause. Its own trace is identical line for line in
+both modes up to and including decoder creation, and a different client on the
+same desktop, Moonlight, decodes in hardware without trouble. That rules out the
+GPU, the kernel driver, the compositor and the network.
+
+## Streaming from Desktop Mode runs at about 25 frames per second
+
+Steam's outgoing capture on the desktop is limited by capture, not by encoding.
+The host's own report names the step:
+
+```
+capture 39.96  convert 0.00  encode 5.37  network 0.52  decode 0.26  display 0.29  (capture)
+```
+
+Forty milliseconds is 25 frames per second, and it is how Steam drives KDE's
+screencast portal rather than a limit of the portal. Another application using the
+same portal on the same machine logged `Compositor negotiated frame rate: max
+164/1` and paced itself at 60 frames per second. There is nothing to set here.
+Game Mode does not have this limit.
+
+## KDE reports that gamescope crashed when you leave Game Mode
+
+Harmless, and not caused by this project. Leaving Game Mode for the desktop ends
+the Gamescope session, and on the way out Gamescope destroys its Vulkan device
+from a static destructor after the Vulkan library has already been unloaded, so it
+calls into memory that is no longer mapped. The session was ending anyway and
+nothing is lost, but systemd writes a core file each time and KDE may offer to
+report it.
+
+Confirmed on 2026-09-26 against Valve's own `gamescope 3.16.23.6-1` with this
+project's artifact switched off for one session, which crashed the same way, so it
+is not the capture correction. It is reported upstream as
+[ValveSoftware/gamescope#1526](https://github.com/ValveSoftware/gamescope/issues/1526),
+open since September 2024, where the first report carries the same backtrace with
+line numbers and names the global Vulkan device that is destroyed too late. The backtrace ends in `exit`, with
+`CVulkanDevice::~CVulkanDevice` and `CVulkanCmdBuffer::~CVulkanCmdBuffer` above it.
+Old core files can be removed with `sudo journalctl --vacuum-time=1d` or by
+deleting them from `/var/lib/systemd/coredump`.
+
+## A game with any 32-bit component crashes a minute or two after launch
+
+Not caused by anything this project installs, and not present on images it
+builds, but worth naming because nothing in the symptom points at the cause.
+
+SteamOS's performance overlay is injected into every title by the Gamescope
+session rather than enabled per game, and its 32-bit capsule carries a hard link
+dependency on `libxkbcommon.so.0` that Valve's `lib32-mangohud` package does not
+declare. On a system missing `lib32-libxkbcommon`, any game with a 32-bit part, a
+native 32-bit binary or a 32-bit anti-cheat helper, dies with a SIGSEGV shortly
+after it starts. There is no GPU driver error and no memory pressure to find.
+
+Images built by this project install the package, and the repair path reinstalls
+it after every SteamOS update, so this should not reach you. If a game behaves
+this way, confirm it is there:
+
+```sh
+pacman -Q lib32-libxkbcommon
+```
+
+Diagnosed by the community on the upstream project, which carries a fuller
+write-up at
+[docs/mangohud-32bit-crash-fix.md](https://github.com/28allday/steamos-nvidia-installer/blob/main/docs/mangohud-32bit-crash-fix.md).

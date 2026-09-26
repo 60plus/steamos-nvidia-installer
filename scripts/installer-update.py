@@ -135,6 +135,17 @@ def check_steamos(version, tested, what):
           file=sys.stderr)
 
 
+def release_page(cfg, tag):
+    """Where a person can read the full notes.
+
+    Same rule as the asset URLs below: the repository path comes from the
+    configured API and the origin from the configured web origin, so a release
+    server that has been taken over cannot send the reader somewhere else.
+    """
+    path = urlsplit(cfg['release_api']).path.split('/repos/', 1)[-1].strip('/')
+    return cfg['download_origin'] + '/' + path + '/tag/' + tag
+
+
 def fetch(tag, folder, bundle=False):
     cfg = source()
     if tag != 'latest' and not re.fullmatch(r'v[0-9A-Za-z.-]+', tag):
@@ -170,6 +181,7 @@ def fetch(tag, folder, bundle=False):
     if release['tag_name'] != 'v' + value['version'] or (tag != 'latest' and tag != release['tag_name']):
         raise ValueError('Release tag and signed version differ')
     value = dict(value, tag=release['tag_name'], source=cfg['name'],
+                 page=release_page(cfg, release['tag_name']),
                  manifest_sha256=digest((folder / 'installer-manifest.json').read_bytes()))
     if bundle:
         download(assets['installer-bundle.tar'], folder / 'installer-bundle.tar', MAX_BUNDLE)

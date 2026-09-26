@@ -109,7 +109,7 @@ Compare with `sha256sum ~/steamos-build/input/recovery.img` inside Linux.
 
 ## Check and build
 
-Download the source archive for [release 0.1.6](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.6), or clone tag `v0.1.6`, inside Linux. Keep the full
+Download the source archive for [release 0.1.7](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.7), or clone tag `v0.1.7`, inside Linux. Keep the full
 checkout. From its root run:
 
 ```bash

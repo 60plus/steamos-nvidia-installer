@@ -52,7 +52,7 @@ Allow at least 50 GiB free on the Linux work filesystem after downloading the in
    and unpack it. Valve publishes one current image and replaces it over time.
    The builder reports the release it finds and warns if it is one this project
    has not validated, listed in `config/build-baselines.json`. It does not refuse it.
-2. Download and extract **Source code (zip)** from [release 0.1.6](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.6), or clone tag `v0.1.6`. Open the extracted repository folder and run:
+2. Download and extract **Source code (zip)** from [release 0.1.7](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.7), or clone tag `v0.1.7`. Open the extracted repository folder and run:
 
    ```bash
    sudo bash tools/build-complete.sh /path/to/recovery.img

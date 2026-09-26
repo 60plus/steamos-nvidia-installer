@@ -337,3 +337,42 @@ class ContinuousIntegrationChecksEveryShellScript(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheOverlayDependencySurvivesAnOsUpdate(unittest.TestCase):
+    """SteamOS's lib32-mangohud does not declare lib32-libxkbcommon, but its
+    32-bit capsules carry a hard DT_NEEDED on libxkbcommon.so.0. The Gamescope
+    session injects the overlay into every title, so on an image without that
+    package any game with a 32-bit part dies with a SIGSEGV a minute or two in,
+    with nothing in the GPU logs to explain it.
+
+    The package is therefore installed twice, and the two calls are deliberately
+    not alike. The build must refuse to continue without it, because the image
+    would ship broken. The repair path must not, because a SteamOS update writes
+    a whole new root image to the other slot and an overlay dependency must never
+    be the reason an update aborts.
+
+    Nothing guarded either call until 2026-09-26. The correction is inherited
+    from upstream commit 30b40da, which predates this project's first release, so
+    every image published so far carries it. This test is what keeps that true.
+    """
+
+    @staticmethod
+    def install_call(text):
+        """The pacman line that installs it, and the line that handles failure."""
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if "lib32-libxkbcommon" in line and "pacman" in line:
+                return line, lines[index + 1]
+        return None, None
+
+    def test_the_build_refuses_to_produce_an_image_without_it(self):
+        call, outcome = self.install_call(HOST_INSTALLER)
+        self.assertIsNotNone(call, "the image build no longer installs lib32-libxkbcommon")
+        self.assertIn("die", outcome, "a missing overlay dependency would ship in the image")
+
+    def test_the_repair_path_installs_it_but_cannot_break_an_update(self):
+        call, outcome = self.install_call(REPATCH)
+        self.assertIsNotNone(call, "a SteamOS update would drop it and the overlay with it")
+        self.assertIn("log", outcome)
+        self.assertNotIn("die", outcome, "an overlay dependency must never abort an OS update")

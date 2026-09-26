@@ -115,10 +115,10 @@ or every hardware configuration.
 
 ## Get the repository
 
-Use [release 0.1.6](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.6). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+Use [release 0.1.7](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.7). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
 
 ```bash
-git clone --branch v0.1.6 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
+git clone --branch v0.1.7 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
 cd steamos-nvidia-installer
 ```
 
