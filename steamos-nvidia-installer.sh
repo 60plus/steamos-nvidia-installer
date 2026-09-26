@@ -3,9 +3,10 @@
 # steamos-nvidia-installer.sh - turn a CLEAN SteamOS OOBE repair image into a
 # one-click USB installer with NVIDIA (RTX) driver support baked in.
 #
-# Installs the CURRENT Arch Linux nvidia-open driver by default (Valve's own
-# mirror only pins an older 575.x) - or any branch you name with --driver.
-# The version is resolved once at build time, pinned to
+# Installs the nvidia-open driver version this project has tested, recorded in
+# config/build-baselines.json (Valve's own mirror only pins an older 575.x) - or
+# any branch you name with --driver, including "latest" for whatever Arch ships
+# today. The version is resolved once at build time, pinned to
 # permanent archive.archlinux.org URLs, and the on-device self-heal repatch
 # reuses those exact packages, so the installed system stays on one known
 # driver even across OS updates. Safety: NVIDIA's userspace
@@ -87,7 +88,15 @@ ADD_INSTALLER=1
 TRIM_CUDA=0
 SKIP_SIG=0
 PREFLIGHT=0
-DRIVER_SPEC=latest     # latest | <branch or version prefix, e.g. 580>
+# Default to the driver this project has tested, not to whatever Arch shipped
+# today. "latest" remains available through --driver for a deliberate choice.
+# A copy of the script without the repository keeps the old behaviour and says so.
+DRIVER_SPEC="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['tested_driver'])" \
+  "$(dirname "$(realpath "$0")")/config/build-baselines.json" 2>/dev/null)" || DRIVER_SPEC=""
+if [[ -z "$DRIVER_SPEC" ]]; then
+  DRIVER_SPEC=latest   # latest | <branch or version prefix, e.g. 580>
+  printf '\e[1;33m[warn]\e[0m config/build-baselines.json is unavailable; building with --driver latest, which this project has not tested.\n' >&2
+fi
 WORKDIR=""
 INSTALLER_UPDATE_SOURCE=""
 MANGOAPP_DIR=""
@@ -164,7 +173,10 @@ if [[ -n "$REMOTE_PLAY_DIR" ]]; then
   [[ -r "$REMOTE_PLAY_DIR/remote-play-build.json" ]] || die "Incomplete Remote Play artifact"
 fi
 if [[ -n "$GAMESCOPE_DIR" ]]; then
-  [[ $EXPERIMENTAL_BETA == 0 && $EXPERIMENTAL_PREVIEW == 0 ]] || die "Gamescope capture backport is for stable test images only"
+  # The artifact is carried, never forced. pc_install_gamescope selects it only
+  # when the running SteamOS and its Gamescope package both match, and returns
+  # to Valve's build on anything else, so a beta or Preview image can hold it
+  # without using it. That selection is proven in both directions on hardware.
   GAMESCOPE_DIR="$(realpath "$GAMESCOPE_DIR")"
   for file in root/usr/bin/gamescope gamescope-build.json Gamescope-LICENSE; do
     [[ -r "$GAMESCOPE_DIR/$file" ]] || die "Incomplete Gamescope artifact"
@@ -1283,12 +1295,16 @@ ICON
 fi
 
 # Record the exact inputs without marking this candidate as hardware-tested.
+# safe.directory is required because the build runs as root against a checkout
+# owned by the build user. Without it git refuses with "detected dubious
+# ownership", the error goes to /dev/null and the image records "unknown",
+# which is how a candidate loses its provenance. Measured on 2026-09-26.
 {
   printf 'Installer version: %s\n' "$INSTALLER_VERSION"
   printf 'Built UTC: %s\n' "$(date -u +%FT%TZ)"
-  printf 'Source commit: %s\n' "$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
+  printf 'Source commit: %s\n' "$(git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || printf unknown)"
   printf 'Source working tree:\n'
-  git -C "$SCRIPT_DIR" status --short --untracked-files=no 2>/dev/null || true
+  git -C "$SCRIPT_DIR" -c safe.directory="$SCRIPT_DIR" status --short --untracked-files=no 2>/dev/null || true
   printf 'Input image: %s\n' "$(basename "$IMG")"
   printf 'Input SHA256: %s\n' "$(sha256sum "$IMG" | cut -d ' ' -f1)"
   printf 'Update mode: %s\nInstaller: %s\nTrim CUDA: %s\nxpadneo enabled: %s\n' \

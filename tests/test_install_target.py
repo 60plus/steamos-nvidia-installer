@@ -72,6 +72,64 @@ class TargetTests(unittest.TestCase):
         self.target['children'][0]['mountpoints'] = ['/media/esp']
         with self.assertRaises(t.InvalidTarget): self.check()
 
+    def test_a_disk_holding_a_mounted_system_is_offered(self):
+        """The installer used to report no target at all on a machine with a system.
+
+        Measured in the installer environment on 2026-09-25: udisks2 mounts var-A,
+        var-B and home of the installed system under /run/media/deck, so every real
+        disk counted as busy. The maintainer had to delete the partitions by hand and
+        the installer then erased the disk anyway.
+        """
+        layout(self.target)
+        for part, point in [(6, '/run/media/deck/var1'), (7, '/run/media/deck/var'),
+                            (8, '/run/media/deck/home')]:
+            self.target['children'][part - 1]['mountpoints'] = [point]
+        self.assertEqual(t.candidates(self.nodes, '8:3'), [self.target],
+                         'a disk with an installed system must still be offered')
+        self.assertIn('an existing SteamOS installation', t.description(self.target))
+
+    def test_the_list_says_what_each_disk_holds(self):
+        self.assertIn('holds no partitions', t.description(self.target))
+        layout(self.target)
+        self.assertIn('holds an existing SteamOS installation', t.description(self.target))
+        self.target['children'] = [{'name': '/dev/sdb1', 'type': 'part', 'maj:min': '9:1',
+                                    'size': 32 * 1024**3, 'partlabel': 'primary',
+                                    'fstype': 'ext4', 'mountpoints': [None]}]
+        self.assertIn('holds 1 partition of other data', t.description(self.target))
+
+    def test_the_chosen_disk_is_unmounted_before_validation(self):
+        layout(self.target)
+        self.target['children'][7]['mountpoints'] = ['/run/media/deck/home']
+        with patch.object(t.subprocess, 'run',
+                          return_value=subprocess.CompletedProcess([], 0)) as run:
+            released = t.release_disk(self.target)
+        self.assertEqual(released, ['/dev/sdb8 from /run/media/deck/home'])
+        self.assertEqual(run.call_args[0][0][:3], ['udisksctl', 'unmount', '-b'])
+
+    def test_a_partition_that_will_not_release_stops_with_its_name(self):
+        layout(self.target)
+        self.target['children'][7]['mountpoints'] = ['/run/media/deck/home']
+        with patch.object(t.subprocess, 'run',
+                          return_value=subprocess.CompletedProcess([], 1)):
+            with self.assertRaises(t.InvalidTarget) as caught:
+                t.release_disk(self.target)
+        self.assertIn('/dev/sdb8', str(caught.exception))
+        self.assertIn('/run/media/deck/home', str(caught.exception))
+
+    def test_swap_is_named_rather_than_silently_unmounted(self):
+        layout(self.target)
+        self.target['children'][5]['mountpoints'] = ['[SWAP]']
+        with self.assertRaises(t.InvalidTarget) as caught:
+            t.release_disk(self.target)
+        self.assertIn('swapoff', str(caught.exception))
+
+    def test_validation_still_refuses_a_disk_left_mounted(self):
+        # release_disk runs first; if anything is still held, nothing may be written.
+        layout(self.target)
+        self.target['children'][7]['mountpoints'] = ['/run/media/deck/home']
+        with self.assertRaises(t.InvalidTarget):
+            self.check('system')
+
     def test_standard_layout_sata_and_nvme_pass(self):
         for name in ['/dev/sdb', '/dev/nvme0n1', '/dev/mmcblk0']:
             self.target['name'] = name

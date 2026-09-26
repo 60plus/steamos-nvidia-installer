@@ -35,18 +35,22 @@ cd ~/steamos-build
 
 Clone the repository into this folder as described in
 [Get the repository](Build-the-USB-image.md#get-the-repository). Then download
-Valve's SteamOS 3.8.14 recovery archive through
+Valve's SteamOS recovery archive through
 [Valve's recovery instructions](https://help.steampowered.com/en/faqs/view/65B4-2AA3-5F37-4227#install),
 save it in `~/steamos-build/input` and unpack it.
 
+Valve publishes one current recovery image and replaces it over time, so the file
+name below may not be the one you receive. Use the name of the file you actually
+downloaded in every command on this page.
+
 The long number in the third command is the SHA256 checksum of the unpacked
-3.8.14 recovery image. Every correct copy of that file has exactly this
-checksum. The project measured it during the builds described at the end of this
-page, and the installer records the same value in the images it produces. The
-command feeds that expected value to `sha256sum -c`, which reads your own
-unpacked file and compares. It is worth the minute it takes: an incomplete
-download or a damaged unpack otherwise fails much later, in the middle of a build
-that takes hours.
+3.8.14 recovery image, the release this project validated. Every correct copy of
+that exact file has this checksum. The project measured it during the builds
+described at the end of this page, and the installer records the same value in the
+images it produces. The command feeds that expected value to `sha256sum -c`, which
+reads your own unpacked file and compares. It is worth the minute it takes: an
+incomplete download or a damaged unpack otherwise fails much later, in the middle
+of a build that takes hours.
 
 ```bash
 cd ~/steamos-build/input
@@ -55,9 +59,14 @@ echo "f9aa0fa2dd618febf28a5e2a583d1e2b5a8ca3f1205be965da584602ac962f40  steamdec
 ```
 
 The last command must print `OK`. If it prints `FAILED`, download and unpack the
-archive again. If Valve's page offers a different file name or SteamOS version,
-stop: the complete builder currently accepts only the 3.8.14 recovery image, and
-a different image will not match this checksum.
+archive again.
+
+If Valve's page offers a different file name or SteamOS version, the checksum above
+will not match and cannot: it belongs to the 3.8.14 file. Compare against the value
+Valve publishes for the image you downloaded instead. The complete builder accepts a
+newer recovery image. It prints the release it found and warns when that release is
+not in `config/build-baselines.json`, which lists what this project has validated.
+Report the result of such a build so the list can be updated.
 
 ## Native build
 

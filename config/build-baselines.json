@@ -1,0 +1,7 @@
+{
+  "format": 1,
+  "note": "Baselines this project has actually validated. Add an entry only with evidence from a completed build or a hardware test, never in advance. The builders warn about anything outside these lists; they do not refuse it.",
+  "tested_recovery": ["3.8.14"],
+  "tested_build_root": ["3.8.14", "3.8.16"],
+  "tested_driver": "610.57.04-1"
+}

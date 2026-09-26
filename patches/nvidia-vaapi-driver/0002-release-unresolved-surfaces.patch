@@ -1,0 +1,113 @@
+Subject: [PATCH] release surfaces whose resolve never completes
+
+Not an upstream commit: a03711106b5 is upstream's tip and carries no fix for
+this. Offered upstream separately.
+
+waitSurfaceResolved waits on surface->resolving and img->resolving with no
+timeout, and the only thread that clears either is the context's resolve thread.
+Every path that ends that thread leaves surfaces marked: resolveSurfaces exits
+on ctx->exiting without draining its queue, nvBeginPicture marks a surface that
+EndPicture may never queue, and a VideoProc context marks its target with no
+resolve thread running at all. A surface outlives the context that produced it,
+so the next vaExportSurfaceHandle or vaSyncSurface on one of those surfaces
+blocks the calling thread for good.
+
+Measured on 2026-09-26 on RTX 5060 with NVIDIA 610.57.04. Steam's Remote Play
+receiver ran a 2560x1440 session over a wireless link whose PCIe root port logged
+5820 correctable errors, and held four CUDA event handler threads, consistent
+with a decoder recreated several times during the session. When the session
+ended, streaming_client's main thread sat in
+pthread_cond_wait under nvExportSurfaceHandle at 0% CPU, ignored SIGTERM,
+survived until SIGKILL, and gamescope kept its last black frame on screen
+because the window never closed.
+
+Two changes. resolveSurfaces releases what it abandons, so an ordinary teardown
+wakes every waiter at once. waitSurfaceResolved bounds both waits against one
+shared deadline, says so in the log and continues, so the remaining paths
+degrade to a stale frame instead of a process that cannot exit.
+
+diff --git a/src/vabackend.c b/src/vabackend.c
+--- a/src/vabackend.c
++++ b/src/vabackend.c
+@@ -5,6 +5,7 @@
+ #include "kernels.h"
+ 
+ #include <assert.h>
++#include <errno.h>
+ #include <stdio.h>
+ #include <stdint.h>
+ #include <stdlib.h>
+@@ -658,6 +659,24 @@ static void* resolveSurfaces(void *param) {
+         CHECK_CUDA_RESULT(cv->cuvidUnmapVideoFrame(ctx->decoder, deviceMemory));
+     }
+ out:
++    //Both exits above abandon whatever is left on the queue, and nothing else
++    //ever clears those surfaces, so release the waiters here rather than making
++    //each one wait out its own timeout. renderTarget and displayTarget are
++    //marked in nvBeginPicture and may not have reached the queue at all.
++    pthread_mutex_lock(&ctx->resolveMutex);
++    while (ctx->surfaceQueueReadIdx != ctx->surfaceQueueWriteIdx) {
++        NVSurface *pending = ctx->surfaceQueue[ctx->surfaceQueueReadIdx++];
++        if (ctx->surfaceQueueReadIdx >= SURFACE_QUEUE_SIZE) {
++            ctx->surfaceQueueReadIdx = 0;
++        }
++        pthread_mutex_unlock(&ctx->resolveMutex);
++        setSurfaceResolving(pending, false);
++        pthread_mutex_lock(&ctx->resolveMutex);
++    }
++    pthread_mutex_unlock(&ctx->resolveMutex);
++    setSurfaceResolving(ctx->renderTarget, false);
++    setSurfaceResolving(ctx->displayTarget, false);
++
+     //release the decoder here to prevent multiple threads attempting it
+     if (ctx->decoder != NULL) {
+         CUresult result = cv->cuvidDestroyDecoder(ctx->decoder);
+@@ -1510,14 +1529,31 @@ static void setSurfaceResolving(NVSurface *surface, bool resolving) {
+     pthread_mutex_unlock(&surface->mutex);
+ }
+ 
++/* Only a context's resolve thread clears these flags, and it stops without
++ * clearing the surfaces it never processed, so an unbounded wait here parks the
++ * caller forever with no thread left that could wake it. The caller is the
++ * application's own thread: Steam's Remote Play receiver deadlocks inside
++ * vaExportSurfaceHandle when a stream ends with frames still in flight, then
++ * ignores SIGTERM and has to be killed. Bound the wait instead: a resolve that
++ * has not arrived by now is not going to. */
++#define RESOLVE_WAIT_SECONDS 2
++
+ static void waitSurfaceResolved(NVSurface *surface) {
+     if (surface == NULL) {
+         return;
+     }
+ 
++    struct timespec deadline;
++    clock_gettime(CLOCK_REALTIME, &deadline);
++    deadline.tv_sec += RESOLVE_WAIT_SECONDS;
++
+     pthread_mutex_lock(&surface->mutex);
+     while (surface->resolving) {
+-        pthread_cond_wait(&surface->cond, &surface->mutex);
++        if (pthread_cond_timedwait(&surface->cond, &surface->mutex, &deadline) == ETIMEDOUT) {
++            LOG("Surface %d still resolving after %ds, abandoning the wait", surface->pictureIdx, RESOLVE_WAIT_SECONDS);
++            surface->resolving = 0;
++            break;
++        }
+     }
+     pthread_mutex_unlock(&surface->mutex);
+ 
+@@ -1526,9 +1562,14 @@ static void waitSurfaceResolved(NVSurface *surface) {
+         return;
+     }
+ 
++    /* Same deadline, so the two waits together cannot exceed it. */
+     pthread_mutex_lock(&img->mutex);
+     while (img->resolving) {
+-        pthread_cond_wait(&img->cond, &img->mutex);
++        if (pthread_cond_timedwait(&img->cond, &img->mutex, &deadline) == ETIMEDOUT) {
++            LOG("Backing image of surface %d still resolving after %ds, abandoning the wait", surface->pictureIdx, RESOLVE_WAIT_SECONDS);
++            img->resolving = false;
++            break;
++        }
+     }
+     pthread_mutex_unlock(&img->mutex);
+ }

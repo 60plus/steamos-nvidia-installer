@@ -7,17 +7,25 @@ usage() {
 Usage: sudo bash tools/build-complete.sh [OPTIONS] RECOVERY.img
   --workdir DIR   New directory on a Linux filesystem (must not exist)
   --source FILE   Updater source configuration (default: config/github-stable.json)
-  --driver SPEC   NVIDIA package version (default: 610.57.04-1)
+  --driver SPEC   NVIDIA package version (default: the tested driver in
+                  config/build-baselines.json; "latest" takes whatever Arch
+                  ships today, which this project has not tested)
   --keep-cuda     Keep compute libraries (default removes them)
   --help         Show this help
 Builds MangoApp, Gamescope, Remote Play and NVENC from pinned sources.
-Requires a clean SteamOS 3.8.14 recovery image and at least 50 GiB free for work.
+Takes a clean SteamOS recovery image and needs at least 50 GiB free for work.
+A release outside config/build-baselines.json is a warning, not a refusal.
 Output is written next to the input. Existing output is never overwritten.
 HELP
 }
 die() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+baselines="$repo/config/build-baselines.json"
+baseline_field() {
+  python3 -c "import json,sys;v=json.load(open(sys.argv[1]))[sys.argv[2]];print(' '.join(v) if isinstance(v,list) else v)" \
+    "$baselines" "$1" 2>/dev/null
+}
 original=("$@")
-image='' work='' source="$repo/config/github-stable.json" driver=610.57.04-1
+image='' work='' driver='' source="$repo/config/github-stable.json"
 trim=(--trim-cuda)
 while (( $# )); do
   case "$1" in
@@ -33,6 +41,10 @@ while (( $# )); do
 done
 [[ -n $image ]] || { usage; exit 2; }
 [[ $EUID == 0 ]] || die 'Run with sudo inside the Linux build environment.'
+# Fall back to the tested driver only when the caller named none, so --driver
+# still wins and --help still works without the repository configuration.
+[[ -n $driver ]] || driver="$(baseline_field tested_driver)" \
+  || die 'Cannot read the tested driver from config/build-baselines.json. Pass --driver explicitly.'
 [[ $driver == latest || $driver =~ ^[0-9]+(\.[0-9]+)*(-[0-9]+)?$ ]] || die 'Invalid driver version.'
 image=$(realpath -e -- "$image")
 source=$(realpath -e -- "$source")
@@ -123,7 +135,17 @@ done
 mount -o ro,rescue=nologreplay "$partition" "$lower"
 # Read metadata, never source shell content from an external image.
 grep -Eq '^ID="?steamos"?$' "$lower/etc/os-release" || die 'Not a SteamOS recovery image.'
-grep -Eq '^VERSION_ID="?3\.8\.14"?$' "$lower/etc/os-release" || die 'Complete build currently requires SteamOS 3.8.14; other baselines need validation.'
+# Valve replaces the recovery image without notice, so the version is recorded
+# and reported, not required. The artifact builders still refuse a root that
+# mixes release lines, which is the check that protects the produced image.
+baseline=$(sed -n 's/^VERSION_ID="\?\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\).*/\1/p' "$lower/etc/os-release" | head -n 1)
+[[ -n $baseline ]] || die 'The recovery image has no usable VERSION_ID.'
+tested_recovery="$(baseline_field tested_recovery)" || tested_recovery=''
+if [[ -n $tested_recovery && " $tested_recovery " != *" $baseline "* ]]; then
+  printf 'Warning: this recovery image is SteamOS %s. Validated for this project: %s.\n' "$baseline" "$tested_recovery" >&2
+  printf 'The build continues. Report the result so the validated list can be updated.\n' >&2
+fi
+printf 'Recovery baseline: SteamOS %s\n' "$baseline"
 mount -t overlay overlay -o "index=off,lowerdir=$lower,upperdir=$work/upper,workdir=$work/overlay-work" "$root"
 mount -t proc proc "$root/proc"
 mount --rbind /dev "$root/dev"

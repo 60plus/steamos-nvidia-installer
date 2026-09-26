@@ -8,7 +8,7 @@ repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 source "$(dirname -- "${BASH_SOURCE[0]}")/build-root-guard.sh"
 [[ ! -e $out ]] || { printf 'Output directory already exists: %s\n' "$out" >&2; exit 1; }
 require_stable_build_root "$root"
-chroot "$root" pacman -S --noconfirm gcc glibc meson ninja pkgconf libva libdrm libglvnd ffnvcodec-headers
+chroot "$root" pacman -S --noconfirm gcc glibc linux-api-headers meson ninja pkgconf libva libdrm libglvnd ffnvcodec-headers
 commit=a03711106b5e297a64a704c876aeb776cbce957b
 work=$(chroot "$root" mktemp -d /tmp/remote-play-build.XXXXXX)
 chroot "$root" git -C "$work" init -q
@@ -40,7 +40,7 @@ out,commit,repo=Path(sys.argv[1]),sys.argv[2],Path(sys.argv[3])
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 meta={'source':'https://github.com/elFarto/nvidia-vaapi-driver','commit':commit,
       'scope':'experimental SDR Remote Play receiver; stable SteamOS 3.8',
-      'patches':{p.name:sha(p) for p in (repo/'patches/nvidia-vaapi-driver').glob('*.patch')},
-      'files':{str(p.relative_to(out)):sha(p) for p in out.rglob('*') if p.is_file()}}
+      'patches':{p.name:sha(p) for p in sorted((repo/'patches/nvidia-vaapi-driver').glob('*.patch'))},
+      'files':{str(p.relative_to(out)):sha(p) for p in sorted(out.rglob('*')) if p.is_file()}}
 (out/'remote-play-build.json').write_text(json.dumps(meta,indent=2)+'\n')
 META

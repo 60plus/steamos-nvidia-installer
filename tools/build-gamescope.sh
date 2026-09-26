@@ -19,7 +19,9 @@ chroot "$root" pacman -S --noconfirm gcc glibc linux-api-headers git meson ninja
   freerdp pixman libinput seatd pipewire libpipewire libdecor libei luajit libavif \
   aom rav1e libdisplay-info libliftoff glm benchmark catch2 libcap hwdata libpng \
   lcms2 util-linux-libs xorg-xwayland sdl2-compat systemd-libs dbus libffi expat zlib
-commit=2b79e07b3da1723c7e5c5f44f18de36c6cb78b9e
+# Tag 3.16.23.6, the tip of Valve's jupiter-3.8 branch and the package current
+# stable SteamOS ships. Both project patches apply to it unchanged.
+commit=154f435a2c0026510545b7b7524d104bed253cb3
 work=$(chroot "$root" mktemp -d /tmp/gamescope-build.XXXXXX)
 printf 'Build source directory: %s%s\n' "$root" "$work"
 chroot "$root" git -C "$work" init -q
@@ -55,7 +57,7 @@ for p in source.rglob('*'):
         shutil.copyfile(p,dest)
 sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
 metadata={'source':'https://github.com/ValveSoftware/gamescope','commit':commit,
-'upstream_fix':'ff6b924fd0634a51d0fb3755c56c01dca1daadc1','base_version':'3.16.23.4',
+'upstream_fix':'ff6b924fd0634a51d0fb3755c56c01dca1daadc1','base_version':'3.16.23.6',
 'status':'experimental; hardware acceptance required',
 'build_packages':subprocess.check_output(['chroot',str(root),'pacman','-Q'],text=True).splitlines(),
 'submodules':subprocess.check_output(['chroot',str(root),'git','-C',sys.argv[5],'submodule','status','--recursive'],text=True).splitlines(),

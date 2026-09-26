@@ -789,26 +789,44 @@ MANGO_SERVICE
 
 # Keep the capture backport separate from Valve's executable. Unknown target
 # versions retain stock Gamescope instead of carrying an older compositor forward.
+# Each artifact is built from one Gamescope release, so it is selected only where
+# the system ships exactly that package. Naming a SteamOS point release here was a
+# mistake: Valve moved stable from 3.8.16 to 3.8.28 on 22 September 2026, the pair
+# stopped matching, and the capture correction silently switched itself off, which
+# takes Remote Play from this machine back to a black picture. The package version
+# is the real constraint, so that is what is compared; the release only has to stay
+# on the 3.8 line the artifact was compiled against.
+pc_gamescope_expected_package() {
+  case "$1" in
+    2b79e07b3da1723c7e5c5f44f18de36c6cb78b9e) printf 'gamescope 3.16.23.4-1\n' ;;
+    154f435a2c0026510545b7b7524d104bed253cb3) printf 'gamescope 3.16.23.6-1\n' ;;
+    *) return 1 ;;
+  esac
+}
+
 pc_install_gamescope() {
-  local root="$1" base="$1/usr/lib/steamos-nvidia/gamescope" result version
+  local root="$1" base="$1/usr/lib/steamos-nvidia/gamescope" result version commit expected
   local override="$1/usr/lib/systemd/user/gamescope-session.service.d/30-nvidia-capture.conf"
   [[ -d "$base" ]] || return 0
-  python3 - "$base" <<'CAPTURE_VERIFY'
+  commit=$(python3 - "$base" <<'CAPTURE_VERIFY'
 import hashlib,json,sys
 from pathlib import Path
 p=Path(sys.argv[1]); m=json.loads((p/'gamescope-build.json').read_text())
-if m.get('commit') != '2b79e07b3da1723c7e5c5f44f18de36c6cb78b9e':
-    raise SystemExit('Unsupported Gamescope capture artifact')
 if hashlib.sha256((p/'bin/gamescope').read_bytes()).hexdigest() != m['files']['usr/bin/gamescope']:
     raise SystemExit('Gamescope capture checksum mismatch')
 if not (p/'Gamescope-LICENSE').is_file():
     raise SystemExit('Missing Gamescope license')
+print(m.get('commit', ''))
 CAPTURE_VERIFY
-  [[ $? == 0 ]] || return 1
+  ) || return 1
+  expected=$(pc_gamescope_expected_package "$commit") || {
+    echo "Unsupported Gamescope capture artifact: $commit" >&2
+    return 1
+  }
   result=stock
   version=$(chroot "$root" pacman -Q gamescope 2>/dev/null) || version=unknown
-  if grep -Eq '^VERSION_ID="?3\.8\.16"?$' "$root/etc/os-release" &&
-     [[ $version == 'gamescope 3.16.23.4-1' ]] &&
+  if grep -Eq '^VERSION_ID="?3\.8\.' "$root/etc/os-release" &&
+     [[ $version == "$expected" ]] &&
      grep -Eq '^exec gamescope[[:space:]]' "$root/usr/lib/steamos/gamescope-session"; then
     chroot "$root" /usr/lib/ld-linux-x86-64.so.2 --list /usr/lib/steamos-nvidia/gamescope/bin/gamescope >/dev/null || return 1
     mkdir -p "$(dirname "$override")"

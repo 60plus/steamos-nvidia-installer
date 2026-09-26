@@ -51,6 +51,40 @@ pc_install_gamescope "$1"
         self.assertFalse(self.override.exists())
         self.assertTrue((self.base / 'status.txt').read_text().startswith('stock'))
 
+    def set_artifact_commit(self, commit):
+        data = json.loads((self.base / 'gamescope-build.json').read_text())
+        data['commit'] = commit
+        (self.base / 'gamescope-build.json').write_text(json.dumps(data))
+
+    def test_a_later_point_release_keeps_the_correction_when_the_package_matches(self):
+        """The selection follows the Gamescope package, not a SteamOS point release.
+
+        Valve moved stable from 3.8.16 to 3.8.28 on 22 September 2026. The rule used
+        to name 3.8.16, so the correction switched itself off on an ordinary system
+        update and Remote Play from the machine went back to a black picture, which
+        the maintainer hit on 2026-09-25.
+        """
+        self.set_artifact_commit('154f435a2c0026510545b7b7524d104bed253cb3')
+        for release in ['3.8.28', '3.8.16', '3.8.99']:
+            with self.subTest(release=release):
+                (self.root / 'etc/os-release').write_text(f'VERSION_ID="{release}"\n')
+                self.assertEqual(self.run_install('gamescope 3.16.23.6-1').returncode, 0)
+                self.assertIn('/usr/lib/steamos-nvidia/gamescope/bin', self.override.read_text())
+
+    def test_an_artifact_for_another_package_still_stands_aside(self):
+        # The 3.16.23.4 artifact must not be carried onto a system shipping 3.16.23.6.
+        (self.root / 'etc/os-release').write_text('VERSION_ID="3.8.28"\n')
+        self.assertEqual(self.run_install('gamescope 3.16.23.6-1').returncode, 0)
+        self.assertFalse(self.override.exists())
+        self.assertTrue((self.base / 'status.txt').read_text().startswith('stock'))
+
+    def test_an_unknown_artifact_is_refused_rather_than_trusted(self):
+        self.set_artifact_commit('0' * 40)
+        result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Unsupported Gamescope capture artifact', result.stderr)
+        self.assertFalse(self.override.exists())
+
     def test_corruption_and_incompatible_libraries_cannot_activate(self):
         self.assertNotEqual(self.run_install(loader='1').returncode, 0)
         self.assertFalse(self.override.exists())

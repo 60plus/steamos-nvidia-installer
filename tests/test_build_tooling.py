@@ -6,6 +6,7 @@ interrupted run that leaves a file named exactly like a finished image, and a
 package transaction killed mid-flight whose lock breaks the advertised resume.
 """
 import fnmatch
+import json
 import os
 import re
 import shutil
@@ -166,6 +167,149 @@ class BuildLeftoversStayOutOfGitStatus(unittest.TestCase):
                     if line.strip() and not line.startswith("#")]
         self.assertTrue(any(fnmatch.fnmatch(name, pattern) for pattern in patterns),
                         ".gitignore does not cover the probe directory " + name)
+
+
+class ValidatedBaselinesLiveInOneTable(unittest.TestCase):
+    """Versions we have validated are data, not constants spread through scripts.
+
+    Valve replaces the recovery image without notice, so naming one release in a
+    refusal turns into a broken build for whoever downloads the current file from
+    the link we ourselves publish. The builders record and warn instead.
+    """
+
+    BASELINES = json.loads((ROOT / "config" / "build-baselines.json").read_text(encoding="utf-8"))
+
+    def test_the_table_declares_what_the_builders_read(self):
+        for field in ("tested_recovery", "tested_build_root", "tested_driver"):
+            self.assertIn(field, self.BASELINES)
+        for version in self.BASELINES["tested_recovery"] + self.BASELINES["tested_build_root"]:
+            self.assertRegex(version, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        # The installer validates --driver with this expression; the default must pass it.
+        self.assertRegex(self.BASELINES["tested_driver"], r"^[0-9]+(\.[0-9]+)*(-[0-9]+)?$")
+
+    def test_the_complete_builder_records_the_baseline_instead_of_demanding_one(self):
+        self.assertNotIn("Complete build currently requires SteamOS", COMPLETE)
+        self.assertNotIn(r"""grep -Eq '^VERSION_ID="?3\.8\.14"?$'""", COMPLETE)
+        self.assertIn("Recovery baseline: SteamOS", COMPLETE)
+        self.assertIn("tested_recovery", COMPLETE)
+        # The identity check is the one that must stay unconditional.
+        self.assertIn("Not a SteamOS recovery image.", COMPLETE)
+
+    def test_neither_builder_hardcodes_the_tested_driver(self):
+        for name, text in [("tools/build-complete.sh", COMPLETE),
+                           ("steamos-nvidia-installer.sh", HOST_INSTALLER)]:
+            with self.subTest(script=name):
+                self.assertIn("build-baselines.json", text)
+                self.assertNotIn("driver=" + self.BASELINES["tested_driver"], text)
+
+    def test_the_installer_no_longer_defaults_to_whatever_arch_ships_today(self):
+        # tools/build-complete.sh always pinned a version; the documented plain
+        # installer commands did not, so they silently followed Arch.
+        self.assertNotIn("DRIVER_SPEC=latest     #", HOST_INSTALLER)
+        self.assertIn("tested_driver", HOST_INSTALLER)
+        self.assertIn("--driver", HOST_INSTALLER)
+
+    def test_an_experimental_image_may_carry_the_gamescope_artifact(self):
+        # pc_install_gamescope decides at install time and returns to Valve's
+        # build when the versions do not match, so a build-time refusal was a
+        # second lock on the same door.
+        self.assertNotIn("Gamescope capture backport is for stable test images only", INSTALLER)
+        support = (ROOT / "lib" / "pc-support.sh").read_text(encoding="utf-8")
+        self.assertIn("pc_install_gamescope", support)
+        self.assertIn('result=stock', support)
+
+
+class TwoHostsBuildingOneCommitRecordTheSameMetadata(unittest.TestCase):
+    """Artifact metadata must not depend on the order the filesystem lists files.
+
+    Three builders hashed their patches and outputs straight from glob(), so the
+    recorded JSON came out with its keys in directory order. The compiled binaries
+    were identical across build hosts but the metadata files were not, which made
+    two images from one commit impossible to compare by checksum. Measured on
+    2026-09-25: 86 of 89 addon files matched between an Arch and a Bazzite build,
+    and the three that did not differed only in key order.
+    """
+
+    ARTIFACT_BUILDERS = ["build-mangoapp.sh", "build-gamescope.sh",
+                         "build-remote-play.sh", "build-nvenc.sh"]
+
+    def test_every_hashed_listing_is_sorted(self):
+        for name in self.ARTIFACT_BUILDERS:
+            text = (ROOT / "tools" / name).read_text(encoding="utf-8")
+            for number, line in enumerate(text.splitlines(), 1):
+                if "glob(" not in line:
+                    continue
+                # Only listings whose order reaches the recorded JSON matter. The
+                # licence copy loop writes each file to its own path either way.
+                if "hexdigest" not in line and "sha(" not in line:
+                    continue
+                with self.subTest(builder=name, line=number):
+                    self.assertIn("sorted(", line, line.strip())
+
+
+class EveryBuilderInstallsWhatItCompilesAgainst(unittest.TestCase):
+    """A builder that leans on a package an earlier builder installed is not
+    independent, and this project documents building the artifacts separately.
+
+    Measured on 2026-09-26. Building only the receiver against a fresh 3.8.14
+    build root failed at the first object with "fatal error: linux/types.h: No
+    such file or directory". libdrm's headers include <linux/types.h>, which
+    comes from linux-api-headers. build-mangoapp.sh and build-gamescope.sh
+    installed it, build-remote-play.sh and build-nvenc.sh did not, and those two
+    only ever worked because tools/build-complete.sh runs them after the other
+    two into the same overlay. The documented --remote-play-dir and --nvenc-dir
+    flows, which take an artifact built on its own, could not work.
+    """
+
+    COMPILING_BUILDERS = ["build-mangoapp.sh", "build-gamescope.sh",
+                          "build-remote-play.sh", "build-nvenc.sh"]
+
+    @staticmethod
+    def install_command(text):
+        """The pacman line, with its backslash continuations joined."""
+        lines = text.splitlines()
+        for index, line in enumerate(lines):
+            if "pacman -S " not in line:
+                continue
+            command = []
+            while index < len(lines):
+                command.append(lines[index].rstrip("\\"))
+                if not lines[index].rstrip().endswith("\\"):
+                    break
+                index += 1
+            return " ".join(command)
+        return ""
+
+    def test_every_builder_that_compiles_c_installs_the_kernel_headers(self):
+        for name in self.COMPILING_BUILDERS:
+            command = self.install_command((ROOT / "tools" / name).read_text(encoding="utf-8"))
+            with self.subTest(builder=name):
+                self.assertTrue(command, "no pacman install line found")
+                self.assertIn("linux-api-headers", command)
+
+
+class TheImageRecordsWhichCommitBuiltIt(unittest.TestCase):
+    """Provenance has to survive being read by a different user than owns the checkout.
+
+    Measured on 2026-09-26: the 0.1.6 candidate recorded "Source commit: unknown"
+    and an empty working tree. tools/build-complete.sh runs the installer as root
+    while the checkout belongs to the build user, so git refuses with "detected
+    dubious ownership", the error is sent to /dev/null and the fallback wins. The
+    image was then impossible to trace back to a commit.
+    """
+
+    def test_every_git_call_in_the_installer_passes_safe_directory(self):
+        text = (ROOT / "steamos-nvidia-installer.sh").read_text(encoding="utf-8")
+        calls = [line.strip() for line in text.splitlines()
+                 if "git -C" in line and not line.strip().startswith("#")]
+        self.assertTrue(calls, "the installer no longer reads the repository")
+        for call in calls:
+            with self.subTest(call=call):
+                self.assertIn("safe.directory", call)
+
+    def test_the_recording_still_falls_back_rather_than_failing(self):
+        text = (ROOT / "steamos-nvidia-installer.sh").read_text(encoding="utf-8")
+        self.assertIn("printf unknown", text)
 
 
 class ContinuousIntegrationChecksEveryShellScript(unittest.TestCase):

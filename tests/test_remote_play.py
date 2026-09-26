@@ -55,3 +55,45 @@ class ReceiverInstallation(unittest.TestCase):
             self.assertEqual(run().returncode,0);self.assertEqual(drop.read_bytes(),saved)
             (base/names[0]).write_bytes(b'corrupt')
             self.assertNotEqual(run().returncode,0)
+
+class EveryReceiverPatchReachesTheBuild(unittest.TestCase):
+    """A patch that nothing applies is worse than no patch: it reads as fixed.
+
+    0002 bounds the wait for a surface resolve. Measured on 2026-09-26 on RTX 5060
+    with NVIDIA 610.57.04: after a Remote Play session ended, the receiver's main
+    thread stayed in pthread_cond_wait under nvExportSurfaceHandle at no CPU,
+    ignored SIGTERM, needed SIGKILL, and gamescope kept its last black frame on
+    screen the whole time. The builder and the README have to keep up with
+    whatever lands in the directory, and the correction must stay bounded.
+    """
+
+    DIRECTORY = ROOT / 'patches/nvidia-vaapi-driver'
+    PATCHES = sorted(DIRECTORY.glob('*.patch'))
+
+    def test_the_builder_applies_the_whole_directory(self):
+        script = (ROOT / 'tools/build-remote-play.sh').read_text(encoding='utf-8')
+        self.assertTrue(self.PATCHES)
+        self.assertIn('patches/nvidia-vaapi-driver/*.patch', script)
+        self.assertIn('apply --check', script)
+        # The recorded metadata has to cover the same directory, or an image can
+        # carry a patch its own build record does not mention.
+        self.assertIn("sorted((repo/'patches/nvidia-vaapi-driver').glob('*.patch'))", script)
+
+    def test_each_patch_is_documented_by_file_name(self):
+        readme = (self.DIRECTORY / 'README.md').read_text(encoding='utf-8')
+        for patch in self.PATCHES:
+            with self.subTest(patch=patch.name):
+                self.assertIn(patch.name, readme)
+
+    def test_every_resolve_wait_the_receiver_patch_touches_is_bounded(self):
+        text = (self.DIRECTORY / '0002-release-unresolved-surfaces.patch').read_text(encoding='utf-8')
+        added = [line[1:] for line in text.splitlines()
+                 if line.startswith('+') and not line.startswith('+++')]
+        removed = [line[1:] for line in text.splitlines()
+                   if line.startswith('-') and not line.startswith('---')]
+        self.assertTrue(removed, 'the patch no longer removes anything')
+        for line in removed:
+            self.assertIn('pthread_cond_wait(', line)
+        self.assertTrue([line for line in added if 'pthread_cond_timedwait(' in line])
+        self.assertEqual([], [line for line in added if 'pthread_cond_wait(' in line])
+        self.assertTrue([line for line in added if 'ETIMEDOUT' in line])

@@ -60,10 +60,32 @@ def identity(disk):
 
 
 def candidates(nodes, root_id):
+    # A mounted partition does not hide a disk. The desktop's automounter picks up
+    # an installed system as soon as the installer starts, so the only disk that was
+    # ever offered was an empty one, and the maintainer had to delete partitions by
+    # hand before the installer would erase them anyway. Hiding the disk protected
+    # nothing, and a partition editor has none of the checks this tool applies. The
+    # installer's own disk stays excluded by device number, and release_disk unmounts
+    # the chosen one before validation, which still refuses anything left mounted.
     source, _ = source_disk(nodes, root_id)
     return [d for d in nodes if d['type'] == 'disk' and d['maj:min'] != source['maj:min']
-            and not d.get('ro') and not busy(d) and int(d['size']) >= MIN_DISK_BYTES
+            and not d.get('ro') and int(d['size']) >= MIN_DISK_BYTES
             and int(d.get('log-sec') or 0) == 512]
+
+
+def contents(disk):
+    """Name what is already on a disk, so erasing it is a deliberate choice.
+
+    This is the protection that replaces hiding a disk: a data disk now appears in
+    the list too, and the only thing standing between it and an erase is what the
+    reader is told here and in the confirmation that follows.
+    """
+    parts = [p for p in disk.get('children', []) if p.get('type') == 'part']
+    if not parts:
+        return 'no partitions'
+    if [p.get('partlabel') for p in parts] == [label for label, _, _ in PARTS]:
+        return 'an existing SteamOS installation'
+    return '%d partition%s of other data' % (len(parts), '' if len(parts) == 1 else 's')
 
 
 def validate(nodes, root_id, target, mode, expected=None):
@@ -117,7 +139,37 @@ def snapshot():
 
 def description(disk):
     bus = 'USB (external)' if disk.get('tran') == 'usb' else disk.get('tran') or 'unknown bus'
-    return f"{int(disk['size']) / 1024**3:.1f} GiB / {disk.get('model') or 'Unknown model'} / {bus}"
+    return (f"{int(disk['size']) / 1024**3:.1f} GiB / {disk.get('model') or 'Unknown model'}"
+            f" / {bus} / holds {contents(disk)}")
+
+
+def release_disk(disk):
+    """Unmount whatever the desktop mounted on the chosen disk, before it is erased.
+
+    Measured in the installer environment on 2026-09-25: udisks2 had mounted var-A,
+    var-B and home of an installed system under /run/media/deck, so the disk counted
+    as busy and no target was offered at all.
+    """
+    released = []
+    for node in flatten([disk]):
+        for point in (node.get('mountpoints') or []):
+            if not point:
+                continue
+            if point == '[SWAP]':
+                raise InvalidTarget(f'{node["name"]} is in use as swap. Run '
+                                    f'"sudo swapoff {node["name"]}" and select the disk again.')
+            unmounted = subprocess.run(['udisksctl', 'unmount', '-b', node['name']],
+                                       capture_output=True, text=True, timeout=60)
+            if unmounted.returncode != 0:
+                unmounted = subprocess.run(['sudo', '-n', 'umount', node['name']],
+                                           capture_output=True, text=True, timeout=60)
+            if unmounted.returncode != 0:
+                raise InvalidTarget(f'Could not unmount {node["name"]} from {point}. '
+                                    'Close anything using it, then select the disk again.')
+            released.append(f'{node["name"]} from {point}')
+    if released:
+        print('Unmounted before installation: ' + ', '.join(released))
+    return released
 
 
 def guard(target, mode, expected):
@@ -196,7 +248,7 @@ def select(mode):
     nodes, root_id = snapshot()
     disks = candidates(nodes, root_id)
     if not disks:
-        raise InvalidTarget('No available target disk. Connect an internal or USB disk with enough space, 512-byte logical sectors and no mounted partitions.')
+        raise InvalidTarget('No available target disk. Connect an internal or USB disk with enough space and 512-byte logical sectors. A disk that already holds a system can be used; its partitions are unmounted for you.')
     title = 'Install SteamOS to disk' if mode == 'all' else 'Reinstall SteamOS, keep home'
     message = ('Select an internal or external USB disk. All data on the selected disk will be erased.'
                if mode == 'all' else 'Select an existing SteamOS disk. The OS will be replaced; games and data in /home will be kept.')
@@ -213,6 +265,9 @@ def select(mode):
     if chosen is None:
         raise InvalidTarget('No valid disk selected.')
     token = identity(chosen)
+    # Unmounting is not destructive and nothing is written yet, so it happens before
+    # the confirmation. validate() then refuses anything that is still held.
+    release_disk(chosen)
     disk = guard(target, mode, token)
     text = f"{target}\n{description(disk)}\n\n"
     text += ('All data on this disk will be permanently erased.' if mode == 'all'

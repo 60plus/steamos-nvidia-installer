@@ -33,7 +33,7 @@ p=Path(sys.argv[1])
 value={'source':'https://github.com/flightlessmango/MangoHud','commit':sys.argv[2],
 'upstream_fix':'4e69793b9b77a394b8f7842a78de235eaf3859df',
 'changes':['Refresh NVIDIA sensor settings each sampling cycle','Hide unsupported NVIDIA voltage and junction temperature fields','Show detected GPU, VRAM capacity and CPU in Steam overlay presets 3 and 4'],
-'patches':{x.name:hashlib.sha256(x.read_bytes()).hexdigest() for x in Path(sys.argv[3]).glob('*.patch')},
+'patches':{x.name:hashlib.sha256(x.read_bytes()).hexdigest() for x in sorted(Path(sys.argv[3]).glob('*.patch'))},
 'sha256':hashlib.sha256((p/'mangoapp').read_bytes()).hexdigest()}
 (p/'mangoapp-build.json').write_text(json.dumps(value,indent=2)+'\n')
 PY

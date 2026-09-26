@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import importlib.util
 import io
@@ -16,6 +17,47 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 def manifest():
     return dict(format=1, version='0.1.0-dev.1', steamos=['3.8.16'], notes='Update tools',
                 bundle_sha256='0'*64, files={name: m.digest(b'test') for name in m.FILES})
+
+
+class SteamosCompatibilityIsRecordedNotEnforced(unittest.TestCase):
+    """A declared version list must not block the releases people actually run.
+
+    Every release so far declared 3.8.16. Valve moved stable to 3.8.28 on
+    2026-09-22, so the published updater would have refused on current stable,
+    and the next point release would do it again. The list now records what was
+    tested: below the oldest entry there is nothing to stand on and the update
+    still refuses, at or above it the update proceeds and says what it saw. The
+    integration itself ends in pc_check_addons under set -e, so a release that
+    genuinely does not fit fails there instead of degrading quietly.
+    """
+
+    def warn(self, version, tested=('3.8.16', '3.8.28')):
+        captured = io.StringIO()
+        with contextlib.redirect_stderr(captured):
+            m.check_steamos(version, list(tested), 'Release')
+        return captured.getvalue()
+
+    def test_a_tested_release_passes_without_saying_anything(self):
+        self.assertEqual('', self.warn('3.8.28'))
+        self.assertEqual('', self.warn('3.8.16'))
+
+    def test_a_newer_point_release_passes_and_names_both_sides(self):
+        message = self.warn('3.8.29')
+        self.assertIn('3.8.29', message)
+        self.assertIn('3.8.16', message)
+        self.assertIn('3.8.28', message)
+
+    def test_a_newer_series_passes_too(self):
+        self.assertIn('3.9.1', self.warn('3.9.1'))
+
+    def test_older_than_anything_tested_is_refused_and_names_the_oldest(self):
+        with self.assertRaises(ValueError) as refusal:
+            self.warn('3.8.15')
+        self.assertIn('3.8.15', str(refusal.exception))
+        self.assertIn('3.8.16', str(refusal.exception))
+
+    def test_an_unreadable_version_warns_rather_than_crashing(self):
+        self.assertIn('snapshot', self.warn('snapshot'))
 
 
 class InstallerUpdate(unittest.TestCase):

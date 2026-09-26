@@ -4,7 +4,7 @@
 
 ## Complete build
 
-This is the default build. Download and unpack Valve's SteamOS 3.8.14 recovery
+This is the default build. Download and unpack Valve's current SteamOS recovery
 image and clone the full repository first; setup instructions follow below.
 Windows users can start with [Build on Windows](Build-on-Windows.md), and
 Bazzite users with [Build on Bazzite](Build-on-Bazzite.md).
@@ -17,12 +17,19 @@ host:
 sudo bash tools/build-complete.sh /absolute/path/to/recovery.img
 ```
 
-Use the original SteamOS 3.8.14 recovery image. You do not need to prepare a chroot
-or call each artifact builder yourself. The default includes MangoApp, the stable
-Gamescope correction, Remote Play receiver support, NVENC, built-in controller
-support and the GitHub updater configured with this project's public signing key.
-It selects NVIDIA 610.57.04-1 and requests compute-library trimming. See the
-CUDA note below before using trimming in a custom streaming configuration.
+Use the original recovery image Valve publishes, whichever release that currently
+is. You do not need to prepare a chroot or call each artifact builder yourself.
+The default includes MangoApp, the stable Gamescope correction, Remote Play
+receiver support, NVENC, built-in controller support and the GitHub updater
+configured with this project's public signing key. It selects the NVIDIA driver
+recorded in `config/build-baselines.json` and requests compute-library trimming.
+See the CUDA note below before using trimming in a custom streaming configuration.
+
+The builder prints the recovery release it found. Releases this project has
+validated are listed in `config/build-baselines.json`; anything else produces a
+warning and the build continues. The check that does refuse is a build root whose
+package repositories come from another SteamOS line, because the compiled
+artifacts would then target libraries the image does not ship.
 
 Allow at least 50 GiB free on the Linux work filesystem after downloading the
 input. The script creates a new work directory next to it; choose another existing
@@ -108,10 +115,10 @@ or every hardware configuration.
 
 ## Get the repository
 
-Use [release 0.1.5](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.5). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
+Use [release 0.1.6](https://github.com/60plus/steamos-nvidia-installer/releases/tag/v0.1.6). Download **Source code (zip)** or **Source code (tar.gz)** and extract the entire archive, or clone the release tag on Linux:
 
 ```bash
-git clone --branch v0.1.5 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
+git clone --branch v0.1.6 --depth 1 https://github.com/60plus/steamos-nvidia-installer.git
 cd steamos-nvidia-installer
 ```
 
@@ -150,20 +157,24 @@ that after a failed build, an `-nvidia-usbinstall.img` sitting next to your inpu
 the older image, not the one you just tried to make. Check the time on the file
 before flashing it. The unfinished `.partial.img` is removed by the next run.
 
-The default resolves the current Arch NVIDIA driver. To select a specific build:
+The default selects the driver recorded in `config/build-baselines.json`, which is
+the version this project tests on hardware. To select a different build:
 
 ```bash
 sudo ./steamos-nvidia-installer.sh --driver 610.57.04-1 --trim-cuda /path/to/recovery.img
 ```
 
-Choose a driver compatible with both your GPU and the image kernel. `--trim-cuda`
-removes CUDA, OpenCL and OptiX libraries; omit it if your applications need them.
+`--driver latest` resolves whatever Arch ships on the day you build. That is a
+deliberate choice, not the default: the newest packaged driver has not been tested
+by this project and has carried regressions in the past. Choose a driver compatible
+with both your GPU and the image kernel. `--trim-cuda` removes CUDA, OpenCL and
+OptiX libraries; omit it if your applications need them.
 
 ## Options
 
 | Option | Purpose |
 |---|---|
-| `--driver SPEC` | Select `latest`, a version prefix or an exact package version. |
+| `--driver SPEC` | Select a version prefix or an exact package version, or `latest` for the current Arch package. Default: the tested version in `config/build-baselines.json`. |
 | `--installer-update-source FILE` | Include the desktop updater with a maintainer-supplied source and public signing key. |
 | `--mangoapp-dir DIR` | Include the corrected performance overlay artifact. |
 | `--gamescope-dir DIR` | Include the stable Gamescope capture correction. |
@@ -274,10 +285,12 @@ records provenance in `gamescope-build.json`. It does not install them into the
 running system. Keep the license files with the artifact. Compilation and pixel
 conversion checks do not replace a physical Remote Play and screenshot test.
 
-To include the artifact in a stable installer, add `--gamescope-dir /path/to/new-gamescope-output`
-to the normal image build command. It cannot be combined with beta or Preview.
-The recovery desktop keeps its original Gamescope. The private capture build is
-activated after updating to SteamOS 3.8.16 with Gamescope 3.16.23.4-1.
+To include the artifact in an installer, add `--gamescope-dir /path/to/new-gamescope-output`
+to the normal image build command. The recovery desktop keeps its original
+Gamescope. The private capture build is activated once the installed system ships
+the Gamescope package the artifact was built from, on the SteamOS 3.8 line. An
+image may carry the artifact on any channel; the selection happens at install and
+repair time and returns to Valve's build whenever the package does not match.
 
 ## Building Remote Play receiver support
 

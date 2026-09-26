@@ -7,7 +7,7 @@ out=$(realpath -m "${2:?Output directory required}")
 source "$(dirname -- "${BASH_SOURCE[0]}")/build-root-guard.sh"
 [[ ! -e $out ]] || { printf 'Output directory already exists: %s\n' "$out" >&2; exit 1; }
 require_stable_build_root "$root"
-chroot "$root" pacman -S --noconfirm gcc glibc meson ninja pkgconf libva libdrm libglvnd ffnvcodec-headers lib32-glibc lib32-gcc-libs lib32-libglvnd lib32-libva lib32-libdrm
+chroot "$root" pacman -S --noconfirm gcc glibc linux-api-headers meson ninja pkgconf libva libdrm libglvnd ffnvcodec-headers lib32-glibc lib32-gcc-libs lib32-libglvnd lib32-libva lib32-libdrm
 commit=3a58095f1833c997fd4f0a73ce3fa0300cdc20fc
 work=$(chroot "$root" mktemp -d /tmp/nvenc-build.XXXXXX)
 chroot "$root" git -C "$work" init -q
@@ -30,6 +30,6 @@ out,commit=Path(sys.argv[1]),sys.argv[2]
 meta={'source':'https://github.com/efortin/nvidia-vaapi-driver','commit':commit,
       'scope':'experimental 32-bit VAAPI encoding through 64-bit NVENC helper',
       'build_adjustment':'Arch lib32 pkg-config search path; cross file included',
-      'files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in out.rglob('*') if p.is_file()}}
+      'files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(out.rglob('*')) if p.is_file()}}
 (out/'nvenc-build.json').write_text(json.dumps(meta,indent=2)+'\n')
 META

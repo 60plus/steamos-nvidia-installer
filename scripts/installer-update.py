@@ -106,6 +106,35 @@ def validate_manifest(value):
     return value
 
 
+def check_steamos(version, tested, what):
+    """The declared list records what was tested, not what is permitted.
+
+    Refusing everything else turned a Valve point release into a silent block:
+    every release so far declared 3.8.16, Valve shipped 3.8.28, and the published
+    updater would have refused on current stable. Below the oldest tested release
+    there is nothing to stand on, so that still refuses. At or above it the update
+    proceeds and says plainly that this SteamOS was never tested, because the
+    integration ends in pc_check_addons under set -e and fails loudly rather than
+    degrading quietly if the release does not fit.
+    """
+    def parts(value):
+        try:
+            return tuple(int(number) for number in value.split('.'))
+        except ValueError:
+            return None
+    if version in tested:
+        return
+    floor = min(tested, key=parts)
+    running = parts(version)
+    if running is not None and running < parts(floor):
+        raise ValueError(what + ': SteamOS ' + version + ' is older than ' + floor +
+                         ', the oldest release this integration was tested on')
+    print('Warning: this integration was tested on SteamOS ' +
+          ', '.join(sorted(tested, key=parts)) + ' and this system reports ' + version +
+          '. Continuing. The integration checks every addon and fails if it does not fit.',
+          file=sys.stderr)
+
+
 def fetch(tag, folder, bundle=False):
     cfg = source()
     if tag != 'latest' and not re.fullmatch(r'v[0-9A-Za-z.-]+', tag):
@@ -205,8 +234,9 @@ def apply_target(root):
         raise ValueError('Transaction manifest changed')
     verify_signature(raw, folder / 'installer-manifest.sig', source()['public_key'], folder)
     value = validate_manifest(json.loads(raw.read_text()))
-    if value['version'] != item['version'] or request['manifest']['version'] not in value['steamos']:
+    if value['version'] != item['version']:
         raise ValueError('Release is incompatible with this transaction')
+    check_steamos(request['manifest']['version'], value['steamos'], 'Transaction')
     payload = read_bundle(folder / 'installer-bundle.tar', value)
     for name, data in payload.items():
         rel, mode = FILES[name]
@@ -263,8 +293,7 @@ def main():
                 raise ValueError('Release changed since confirmation; check again')
             if value['version'] == installed():
                 raise ValueError('This integration version is already installed')
-            if d.manifest()['version'] not in value['steamos']:
-                raise ValueError('Release does not support this SteamOS version')
+            check_steamos(d.manifest()['version'], value['steamos'], 'Release')
             read_bundle(folder / 'installer-bundle.tar', value)
             d.install(d.read_config(BASE / 'driver.conf')['DRIVER_VERSION'], integration={
                 'version': value['version'], 'manifest_sha256': value['manifest_sha256'], 'folder': str(folder)})

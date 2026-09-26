@@ -1,10 +1,13 @@
-"""The artifact builders must refuse a build root from the wrong SteamOS channel.
+"""The artifact builders must refuse a build root that mixes SteamOS lines.
 
-Artifacts are compiled against the build root's libraries and then shipped in a
-stable image, so a beta, Preview or main root can produce a binary that fails to
-load on the machine that receives it. Only the file inspection is exercised here;
-the privileged part needs root and a mounted /proc.
+Artifacts are compiled against the build root's libraries and then shipped in the
+image built from that same root, so a beta, Preview or main repository can produce
+a binary that fails to load on the machine that receives it. The rule is that every
+repository belongs to the root's own stable line, not that the line is 3.8: a root
+Valve has not shipped yet must build, with a warning. Only the file inspection is
+exercised here; the privileged part needs root and a mounted /proc.
 """
+import json
 import os
 import shutil
 import subprocess
@@ -15,6 +18,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BASH = os.environ.get("BASH_EXE") or shutil.which("bash")
 GUARD = ROOT / "tools" / "build-root-guard.sh"
+BASELINES = json.loads((ROOT / "config" / "build-baselines.json").read_text(encoding="utf-8"))
+VALIDATED_ROOTS = BASELINES["tested_build_root"]
 BUILDERS = ["build-mangoapp.sh", "build-gamescope.sh", "build-remote-play.sh", "build-nvenc.sh"]
 
 STABLE = "\n".join(f"[{name}-3.8.1x]\nServer = https://example.invalid/$repo"
@@ -47,7 +52,24 @@ class StableRootIsAccepted(unittest.TestCase):
     def test_an_untested_point_release_warns_but_still_builds(self):
         result = check("ID=steamos\nVERSION_ID=3.8.18\n", "[options]\n" + STABLE)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("3.8.14 or 3.8.16", result.stderr)
+        self.assertIn("3.8.18", result.stderr, "the warning must name the release it saw")
+        for validated in VALIDATED_ROOTS:
+            self.assertIn(validated, result.stderr, "the warning must list what was validated")
+
+    def test_a_future_release_line_builds_once_its_own_repositories_are_used(self):
+        # Valve replaces the recovery image on its own schedule. A whole new line
+        # must not stop the build, as long as nothing from another line is mixed in.
+        conf = "[options]\n" + "\n".join(f"[{name}-3.9.1x]" for name in ["jupiter", "holo", "core"])
+        result = check("ID=steamos\nVERSION_ID=3.9.1\n", conf)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("3.9.1", result.stderr, "an unvalidated line still warns")
+
+    def test_the_validated_list_comes_from_the_shared_baseline_file(self):
+        # One table, so a new baseline is one edit rather than a hunt through scripts.
+        self.assertEqual(sorted(BASELINES["tested_build_root"]), sorted(VALIDATED_ROOTS))
+        guard = GUARD.read_text(encoding="utf-8")
+        self.assertIn("config/build-baselines.json", guard)
+        self.assertNotIn("3.8.14 or 3.8.16", guard, "the validated releases must not be hardcoded")
 
     def test_a_commented_out_repository_is_not_a_repository(self):
         conf = "[options]\n#[jupiter-3.9]\n" + STABLE

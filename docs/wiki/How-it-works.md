@@ -217,7 +217,7 @@ Outgoing Remote Play has passed hardware testing; screenshot formats still need
 separate acceptance. Custom builders supply the artifact with `--gamescope-dir`.
 
 A separate Gamescope build backports an upstream NVIDIA capture correction to
-version 3.16.23.4. It checks whether the Vulkan device supports the 10-bit RGB
+version 3.16.23.6. It checks whether the Vulkan device supports the 10-bit RGB
 format required for capture. When that format is unavailable, it uses the
 supported BGR layout and decodes screenshot channels in the matching order.
 The shared capture pool also requests sampled-image usage: the RGB-to-NV12
@@ -233,10 +233,17 @@ patch metadata, checksums and license notices. It does not replace Gamescope on
 the running system. The image builder accepts it through `--gamescope-dir`.
 
 The binary lives under `/usr/lib/steamos-nvidia/gamescope/bin`, leaving the
-package-managed binary intact. A user service drop-in selects it through PATH
-only on SteamOS 3.8.16 with Gamescope 3.16.23.4-1 and the expected session script.
-The installer verifies its source revision, hash and target library resolution.
-Recovery 3.8.14 keeps the stock binary. The A/B repair hook carries the artifact
+package-managed binary intact. A user service drop-in selects it through PATH only
+on a SteamOS 3.8 release that ships exactly the Gamescope package the artifact was
+built from, with the expected session script. Naming a SteamOS point release here
+was a mistake that cost a working feature: stable moved from 3.8.16 to 3.8.28 on
+22 September 2026, the rule stopped matching, and outgoing Remote Play went back to
+a black picture on an ordinary system update. The package version is the real
+constraint, so a later point release that keeps the same Gamescope keeps the
+correction, and a Gamescope bump returns to Valve's build until a new artifact
+exists. The installer verifies its source revision, hash and target library
+resolution.
+A recovery image keeps the stock binary. The A/B repair hook carries the artifact
 into the updated slot and reevaluates compatibility before activation. A future
 or unsupported version returns to stock Gamescope automatically.
 
@@ -339,10 +346,14 @@ See [Build on Windows](Build-on-Windows.md) for setup and validation limits.
 
 ## Complete image build
 
-`tools/build-complete.sh` opens the original 3.8.14 recovery image with a read-only
+`tools/build-complete.sh` opens the original recovery image with a read-only
 loop device. It mounts rootfs-A read-only with log replay disabled, then uses a
 separate writable OverlayFS layer for build dependencies and compilation. The
-original image is not the build root's writable filesystem.
+original image is not the build root's writable filesystem. The builder records
+the recovery release it found and warns when it is outside the validated list in
+`config/build-baselines.json`. It refuses a build root whose package repositories
+belong to another SteamOS line, because artifacts compiled there would target
+libraries the produced image does not ship.
 
 The four existing component builders run in order. Once all succeed, the wrapper
 stops background processes rooted in that build environment, unmounts it and

@@ -42,6 +42,11 @@ even when a higher rate works only with HDR off. No single maximum applies to
 every GPU, cable and display. Reconnect HDMI and check the monitor's signal information. HDMI and DisplayPort
 can behave differently on the same display.
 
+On the tested PC, HDR ran at 2560x1440 and 165 Hz over DisplayPort on SteamOS
+3.8.28 with kernel 6.18.50, where an earlier attempt at 144 Hz on an older base
+had not been stable. That is one display on one machine and is recorded as an
+observation, not as a supported configuration.
+
 New display profiles start with HDR off; an existing manual ON choice is retained.
 Restart Steam after connecting a new monitor if its default has not been applied.
 The setting does not force a resolution, refresh rate or scaling value.
@@ -391,3 +396,67 @@ systemctl --user start steamos-nvidia-nvenc.service
 
 The runtime mask disappears at reboot. These commands apply to the integrated
 service, not to earlier manual experiments. The receiver decoder is separate.
+
+## The screen stays black after leaving a streamed game
+
+This is a receiver defect that was measured and fixed on 2026-09-26. On an image
+built before that fix, leaving a game that was being streamed to this machine can
+leave Steam's `streaming_client` alive but unable to exit. Gamescope keeps that
+window on screen, so its last frame stays visible and the machine looks hung
+while it is in fact working.
+
+Check whether the client is still running. The process name is truncated by the
+kernel, so match the short form:
+
+```sh
+ps -eo pid,etime,comm | grep streaming_clien
+```
+
+If it is there at no CPU after the game has ended, that is this defect. Ending it
+returns the screen without a reboot:
+
+```sh
+kill -9 "$(ps -eo pid,comm | awk '$2=="streaming_clien"{print $1; exit}')"
+```
+
+SIGTERM does not work, because the thread that would handle it is the one that is
+stuck. An image built with all components in the [build guide](Build-the-USB-image.md#complete-build) contains the fix.
+Installer Update cannot deliver it, because the receiver driver is compiled and is
+not part of an update bundle, so an affected system needs a new image.
+
+## The streamed desktop has black bars, or looks soft and washed out
+
+Both are host and client behaviour in Steam, measured on 2026-09-26 and not
+caused by anything this project installs. Record which one you have before
+changing settings.
+
+**Black bars above and below.** Steam's host applies the client's resolution as a
+temporary display mode when a session starts, then takes its capture size from
+whatever the desktop currently measures. When a game exits, Windows restores the
+saved desktop mode, and if that mode has a different aspect ratio than the
+receiving screen the picture is letterboxed from then on. An ultrawide 3440x1440
+desktop sent to a 16:9 receiver arrives as 2560x1072 inside 2560x1440, which is
+184 pixels of black at the top and the bottom.
+
+Toggling any capture option in the host's Remote Play settings makes Steam rebuild
+the capture path and reapply the matched mode, which restores the geometry without
+reconnecting. To avoid it entirely, make the saved desktop mode match the
+receiver's aspect ratio, or select a display that already does as the streaming
+display in the host's advanced settings.
+
+**A flat, washed out picture.** On the tested pair the stream arrived at 63.5
+percent of the amplitude it left with: black stayed at 0, mid grey 128 arrived as
+81, white 255 arrived as 162, stable across repeated screenshots. That is a linear
+gain, not a limited against full range mismatch, which would lift black to 16, and
+not a colour matrix error, which leaves neutrals alone.
+
+Measurement excluded the source on the sending PC, Gamescope's compositing, HDR,
+hardware decoding and hardware encoding. Software decoding and disabling hardware
+encoding on both sides changed nothing. Streaming the other way, with the game on
+SteamOS and the PC receiving, was measured as correct on the same pair of machines:
+white arrives as 255 there, against 162 in the failing direction. That rules out the
+network, the codec and the machines as well. What remains is Steam's own conversion
+to YUV and back. Do not compensate with monitor calibration, and do not expect a
+different image build to change it. If you report it, include both directions,
+the capture method and encoder from the host's `streaming_log.txt`, and the
+levels you measure rather than a description.
