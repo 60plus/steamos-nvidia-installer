@@ -1,5 +1,16 @@
 # SteamOS NVIDIA Installer
 
+## Project moved
+
+**Development continues at [60plus/SteamOS_Nvidia_Installer](https://github.com/60plus/SteamOS_Nvidia_Installer).**
+
+Use the new repository for [current documentation](https://github.com/60plus/SteamOS_Nvidia_Installer/wiki),
+[releases](https://github.com/60plus/SteamOS_Nvidia_Installer/releases) and
+[new issue reports](https://github.com/60plus/SteamOS_Nvidia_Installer/issues).
+
+This repository remains available to support existing Installer Update installations.
+Existing releases have not been removed.
+
 ![SteamOS NVIDIA Installer](images/Sos1.png)
 
 **Your RTX PC. Your Steam library. SteamOS.**
